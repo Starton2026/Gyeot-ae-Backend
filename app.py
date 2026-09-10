@@ -8,6 +8,7 @@ from werkzeug.utils import secure_filename
 
 import db as database
 import face_service
+import firebase_service
 
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -63,6 +64,7 @@ def register_missing():
     }
     db["missing"].append(missing)
     database.save_db(db)
+    firebase_service.push_missing(missing)  # 관제 화면 실시간 반영
 
     return jsonify({
         "message": "실종자 등록 완료",
@@ -112,6 +114,7 @@ def submit_report():
     }
     db["reports"].append(report)
     database.save_db(db)
+    firebase_service.push_report(report, missing["name"])  # 관제 화면 실시간 반영
 
     if not face_found:
         message, alert = "사진에서 얼굴을 찾지 못했습니다.", False

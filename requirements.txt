@@ -3,3 +3,4 @@ flask-cors
 cmake
 dlib
 face_recognition
+firebase-admin

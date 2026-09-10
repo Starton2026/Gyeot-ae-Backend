@@ -4,4 +4,5 @@ __pycache__/
 venv/
 uploads/
 db.json
+serviceAccountKey.json
 .DS_Store
