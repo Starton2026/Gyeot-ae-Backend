@@ -12,6 +12,9 @@ serviceAccountKey.json(Firebase 콘솔에서 발급)이 프로젝트 루트에 �
 """
 import os
 
+# macOS에서 gRPC 내장 DNS(c-ares)가 조회에 실패하는 경우가 있어 시스템 리졸버 사용
+os.environ.setdefault("GRPC_DNS_RESOLVER", "native")
+
 KEY_PATH = os.path.join(os.path.dirname(__file__), "serviceAccountKey.json")
 
 # 사진 공개 URL의 베이스 (ngrok 사용 시: BASE_URL=https://xxxx.ngrok.io python app.py)
