@@ -156,6 +156,25 @@
         }
       }
     },
+    "/missing/{missing_id}/resolve": {
+      "post": {
+        "tags": ["missing"],
+        "summary": "발견 완료 (S3·S8)",
+        "description": "사건을 발견 완료로 바꿉니다. **등록한 보호자만.**\n\n\n\n사건을 지우지 않습니다 — 목록에 남겨야 서비스가 작동했다는 증거가 쌓입니다.",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "missing_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "required": false,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "found_at": { "type": "string", "description": "발견 시각. 없으면 지금" }, "note": { "type": "string", "nullable": true, "example": "만수동 파출소에서 보호 중" } } } } }
+        },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string", "example": "resolved" }, "resolved_at": { "type": "string" }, "notified_reporters": { "type": "integer", "description": "제보해 준 사람 수" } } } } } },
+          "401": { "description": "토큰 없음·만료" },
+          "403": { "description": "등록한 보호자가 아님" },
+          "404": { "description": "없는 사건" }
+        }
+      }
+    },
     "/missing": {
       "post": {
         "tags": ["missing"],

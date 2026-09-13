@@ -305,6 +305,54 @@ def my_missing():
     })
 
 
+# ── 10) 발견 완료 — S3·S8 ───────────────────────────────
+@app.route("/missing/<missing_id>/resolve", methods=["POST"])
+def resolve_missing(missing_id):
+    """사건을 발견 완료로 바꾼다. **보호자만.**
+
+    삭제하지 않는다(설계 결정 7번). 목록에 남겨야 이 서비스가 실제로
+    작동했다는 증거가 쌓인다.
+    """
+    user_id = auth_service.current_user_id(request)
+    if user_id is None:
+        return api_error("UNAUTHORIZED", "토큰이 없거나 만료되었습니다.", 401)
+
+    db = database.load_db()
+    m = database.find_missing(db, missing_id)
+    if m is None:
+        return api_error("NOT_FOUND", f"존재하지 않는 실종자입니다: {missing_id}", 404)
+    if m.get("guardian_id") != user_id:
+        return api_error("FORBIDDEN", "등록한 보호자만 발견 완료로 바꿀 수 있습니다.", 403)
+
+    data = request.get_json(silent=True) or {}
+    found_at = data.get("found_at")
+    try:
+        found_at = parse_dt(found_at).isoformat() if found_at else now_kst().isoformat()
+    except ValueError:
+        return api_error("VALIDATION_ERROR", "found_at 형식이 올바르지 않습니다.", 400, "found_at")
+
+    m["status"] = "resolved"
+    m["resolved_at"] = found_at
+    m["resolve_note"] = data.get("note")
+    database.save_db(db)
+    firebase_service.push_missing(m)  # 관제 화면 실시간 반영
+
+    # 제보해 준 사람 수. 한 사람이 여러 번 보냈어도 한 명으로 센다.
+    reporters = {
+        r.get("reporter_id") or r.get("device_hash")
+        for r in database.case_reports(db, missing_id)
+        if r["status"] == "visible"
+    }
+
+    # TODO(알림): 푸시 인프라가 붙으면 이 사람들에게 결과를 보낸다.
+    # 명세서가 "재참여 동기를 만드는 유일한 지점"이라고 적은 자리다.
+    return jsonify({
+        "status": "resolved",
+        "resolved_at": found_at,
+        "notified_reporters": len(reporters),
+    })
+
+
 # ── 5) 실종자 등록 — S7 ─────────────────────────────────
 @app.route("/missing", methods=["POST"])
 def register_missing():
