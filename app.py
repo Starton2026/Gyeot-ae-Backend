@@ -116,7 +116,13 @@ def last_report_at(db, missing):
 
 
 def urgency_score(db, m, user_lat=None, user_lng=None):
-    """긴급도 = 골든타임 × 취약도 × 거리 × 제보공백 (부스트는 3순위)."""
+    """긴급도 = 골든타임 × 취약도 × 거리 × 제보공백 (부스트는 3순위).
+
+    발견 완료는 0이다. 긴급하지 않다. 경과 시간만 보고 계산하면 막 찾은
+    아이가 골든타임 가중을 받아 진행 중인 사건보다 위로 올라온다.
+    """
+    if m["status"] == "resolved":
+        return 0.0
     h = elapsed_minutes(m["missing_at"]) / 60
     golden = 3.0 if h < 3 else 2.0 if h < 12 else 1.5 if h < 48 else 1.0
     vuln = 1.5 if m.get("category") in ("child", "elderly") else 1.0
@@ -509,11 +515,25 @@ def list_missing():
     elif sort == "distance" and user_lat is not None:
         summaries.sort(key=lambda s: s.get("distance_km", 1e9))
     else:  # urgency (기본)
-        summaries.sort(key=lambda s: s["urgency_score"], reverse=True)
+        summaries.sort(key=lambda s: -s["urgency_score"])
+
+    # 어느 정렬이든 발견 완료는 맨 아래로 내린다. 정렬 기준마다 다르게 섞이면
+    # 앱이 "여기부터 발견된 사건" 경계를 그릴 수 없고, 찾은 사람이 아직
+    # 찾는 중인 사람 위에 뜬다. 파이썬 정렬은 안정적이라 앞의 순서는 남는다.
+    summaries.sort(key=lambda s: s["status"] == "resolved")
 
     page = summaries[cursor:cursor + limit]
     next_cursor = str(cursor + limit) if cursor + limit < len(summaries) else None
-    return jsonify({"count": len(summaries), "next_cursor": next_cursor, "items": page})
+    return jsonify({
+        "count": len(summaries),
+        # 상태를 섞어 보여줄 때(status=all) 앱이 "진행 중 12건 · 발견 20건"으로
+        # 나눠 적는다. 합계만 주면 32명이 실종된 것처럼 읽힌다. 지금 페이지가
+        # 아니라 조건에 맞는 전체 기준이다.
+        "active_count": sum(1 for s in summaries if s["status"] == "active"),
+        "resolved_count": sum(1 for s in summaries if s["status"] == "resolved"),
+        "next_cursor": next_cursor,
+        "items": page,
+    })
 
 
 # ── 7) 실종자 상세 — S3 ─────────────────────────────────

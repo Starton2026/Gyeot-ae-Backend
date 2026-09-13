@@ -57,7 +57,7 @@
           "elapsed_minutes": { "type": "integer", "description": "서버 시각 기준 계산" },
           "status": { "type": "string", "enum": ["active", "resolved"] },
           "report_count": { "type": "integer" },
-          "urgency_score": { "type": "number", "example": 9.0 },
+          "urgency_score": { "type": "number", "example": 9.0, "description": "발견 완료는 0. 어느 정렬이든 발견 완료는 목록 맨 아래" },
           "urgency_level": { "type": "string", "enum": ["critical", "high", "normal", "resolved"] },
           "distance_km": { "type": "number", "description": "쿼리에 lat/lng 전달 시에만" }
         }
@@ -227,7 +227,7 @@
           { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20 } }
         ],
         "responses": {
-          "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "count": { "type": "integer" }, "next_cursor": { "type": "string", "nullable": true }, "items": { "type": "array", "items": { "$ref": "#/components/schemas/MissingSummary" } } } } } } }
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "count": { "type": "integer" }, "active_count": { "type": "integer" }, "resolved_count": { "type": "integer" }, "next_cursor": { "type": "string", "nullable": true }, "items": { "type": "array", "items": { "$ref": "#/components/schemas/MissingSummary" } } } } } } }
         }
       }
     },
