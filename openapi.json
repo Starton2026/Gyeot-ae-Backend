@@ -187,7 +187,7 @@
             "multipart/form-data": {
               "schema": {
                 "type": "object",
-                "required": ["name", "age", "gender", "category", "description", "last_lat", "last_lng", "missing_at", "guardian_phone", "photos"],
+                "required": ["name", "age", "gender", "category", "description", "last_lat", "last_lng", "missing_at", "photos"],
                 "properties": {
                   "name": { "type": "string", "example": "김하준" },
                   "age": { "type": "integer", "example": 7 },
@@ -200,7 +200,6 @@
                   "missing_at": { "type": "string", "format": "date-time" },
                   "height_cm": { "type": "integer" },
                   "weight_kg": { "type": "integer" },
-                  "guardian_phone": { "type": "string", "description": "제보자에게 비공개" },
                   "photos": { "type": "array", "items": { "type": "string", "format": "binary" }, "description": "첫 장이 대표" }
                 }
               }

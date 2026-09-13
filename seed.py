@@ -41,7 +41,6 @@ def seed_missing(db):
         "last_lng": 126.9780,
         "last_address": "서울 중구 태평로1가",
         "missing_at": (now - timedelta(hours=1)).isoformat(),
-        "guardian_phone": "010-0000-0000",
         # 사진 파일은 만들지 않는다. 파일 없이 이름만 적어두면 앱이 그 주소를
         # 불러 404를 받는다. 비워두면 앱이 제 실루엣 자리표시자를 그린다.
         # 진짜 사진으로 보려면 POST /missing 으로 등록할 것.

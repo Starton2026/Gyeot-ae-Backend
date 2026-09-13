@@ -363,6 +363,10 @@ def register_missing():
 
     필수 항목은 사진을 저장하기 **전에** 전부 검사한다. 저장부터 하면 틀린
     요청마다 사진 파일이 남는다.
+
+    보호자 연락처(guardian_phone)는 받지 않는다. 제보자에게 공개하지 않고
+    운영팀이 확인할 수도 없어, 쓰는 곳 없이 모으기만 하는 개인정보였다.
+    옛 앱이 보내도 저장하지 않고 버린다.
     """
     user_id = auth_service.current_user_id(request)
     if user_id is None:
@@ -406,9 +410,6 @@ def register_missing():
         missing_at = parse_dt(missing_at).isoformat()
     except ValueError:
         return api_error("VALIDATION_ERROR", "실종 일시 형식이 올바르지 않습니다.", 400, "missing_at")
-    guardian_phone = text("guardian_phone")
-    if not guardian_phone:
-        return api_error("VALIDATION_ERROR", "보호자 연락처를 입력해 주세요.", 400, "guardian_phone")
     if not photos:
         return api_error("VALIDATION_ERROR", "사진을 한 장 이상 올려 주세요.", 400, "photos")
 
@@ -456,7 +457,6 @@ def register_missing():
         "last_lng": last_lng,
         "last_address": text("last_address") or None,
         "missing_at": missing_at,
-        "guardian_phone": guardian_phone,  # 제보자 비공개
         "photos": saved,
         "encoded_photos": encoded_photos,  # encodings[i]가 어떤 사진의 벡터인지
         "encodings": encodings,
