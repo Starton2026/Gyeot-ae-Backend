@@ -145,6 +145,58 @@ def _drop_stale(db, tokens):
 
 # ── 바깥에서 부르는 것 ───────────────────────────────────
 
+def notify_guardian(db, missing, report):
+    """제보가 들어왔다고 보호자에게 알린다. 실제로 보냈으면 True.
+
+    **이 서비스의 핵심 고리다.** 시민의 목격이 보호자에게 되돌아오지 않으면
+    앰버 경보와 똑같은 일방향 전달로 끝난다.
+
+    다른 알림과 달리 **반경·구분·방해 금지 시간을 보지 않는다.** 내 아이를
+    봤다는 제보가 새벽 3시에 들어오면 새벽 3시에 알아야 한다. 방해 금지는
+    동네 소식을 위한 설정이지 내 사건을 위한 설정이 아니다.
+
+    유사도가 낮은 제보도 알린다(설계 결정 3번). 옷을 갈아입었거나 뒷모습만
+    찍힌 진짜 제보가 있고, 판단은 보호자가 한다.
+    """
+    guardian_id = missing.get("guardian_id")
+    if not guardian_id:
+        return False
+
+    # 보호자가 자기 사건에 직접 제보한 경우. 방금 자기가 올린 걸 알림으로
+    # 다시 받을 이유가 없다.
+    if report.get("reporter_id") == guardian_id:
+        return False
+
+    tokens = [
+        device["push_token"]
+        for device in db.get("devices", [])
+        if device.get("push_token") and device.get("user_id") == guardian_id
+    ]
+    if not tokens:
+        return False
+
+    sent, stale = _send(
+        list(dict.fromkeys(tokens)),
+        f"{missing['name']} 님 목격 제보가 들어왔어요",
+        _report_line(report),
+        {"type": "report", "missing_id": missing["id"], "report_id": report["id"]},
+    )
+    _drop_stale(db, stale)
+
+    return sent > 0
+
+
+def _report_line(report):
+    """알림 본문. 얼마나 닮았는지와 어디서 봤는지."""
+    similarity = report.get("similarity")
+    # 얼굴을 못 찾은 제보도 위치와 시간으로 경로에 기여한다(설계 결정 4번).
+    # 유사도 자리에 0%를 적으면 쓸모없는 제보로 읽힌다.
+    match = "얼굴 미확인" if similarity is None else f"유사도 {round(similarity)}%"
+    where = report.get("place_name")
+
+    return f"{match} · {where}" if where else match
+
+
 def notify_new_case(db, missing, exclude_device_hash=None):
     """반경 안 기기에 새 실종 신고를 알린다. 실제로 보낸 기기 수를 돌려준다.
 

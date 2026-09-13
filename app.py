@@ -756,6 +756,10 @@ def create_report():
     to_push[report["id"]] = report
     firebase_service.push_case_reports(to_push.values(), m["name"])
 
+    # 제보가 보호자에게 되돌아가는 자리. 이게 없으면 앰버 경보와 같은
+    # 일방향 전달로 끝난다.
+    notified = push_service.notify_guardian(db, m, report)
+
     return jsonify({
         "id": report["id"],
         "missing_id": m["id"],
@@ -765,7 +769,9 @@ def create_report():
         "photo_url": f"/uploads/{final_name}",
         "observed_at": report["observed_at"],
         "created_at": report["created_at"],
-        "guardian_notified": firebase_service.is_enabled(),
+        # 실제로 보냈을 때만 참이다. Firestore가 켜졌다고 참을 주면, 보호자는
+        # 알림을 받은 줄 알고 기다린다.
+        "guardian_notified": notified,
     }), 201
 
 
