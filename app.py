@@ -14,6 +14,7 @@ from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
+import auth_service
 import db as database
 import face_service
 import firebase_service
@@ -179,6 +180,95 @@ def report_public(r):
     }
 
 
+# ── 1) 카카오 로그인 — S6 ───────────────────────────────
+@app.route("/auth/kakao", methods=["POST"])
+def kakao_login():
+    data = request.get_json(silent=True) or {}
+    access_token = data.get("access_token")
+    if not access_token:
+        return api_error("VALIDATION_ERROR", "access_token은 필수입니다.", 400, "access_token")
+
+    kakao = auth_service.verify_kakao_token(access_token)
+    if kakao is None:
+        return api_error("UNAUTHORIZED", "카카오 토큰 검증에 실패했습니다.", 401)
+
+    db = database.load_db()
+    user = database.find_user_by_kakao(db, kakao["kakao_id"])
+    if user is None:  # 처음 보는 kakao_id → 그 자리에서 계정 생성
+        user = {
+            "id": database.new_id("u_"),
+            "kakao_id": kakao["kakao_id"],
+            "name": kakao["name"],
+            "profile_image_url": kakao["profile_image_url"],
+            "created_at": now_kst().isoformat(),
+        }
+        db["users"].append(user)
+
+    # 같은 기기의 게스트 제보를 계정에 귀속 (S4-2 소프트 로그인)
+    device_hash = request.headers.get("X-Device-Hash")
+    claimed = 0
+    if device_hash:
+        for r in db["reports"]:
+            if r.get("device_hash") == device_hash and not r.get("reporter_id"):
+                r["reporter_id"] = user["id"]
+                claimed += 1
+    database.save_db(db)
+
+    return jsonify({
+        "token": auth_service.issue_token(user["id"]),
+        "user": user,
+        "claimed_reports": claimed,
+    })
+
+
+# ── 3) 내 정보 — S8 ─────────────────────────────────────
+@app.route("/auth/me", methods=["GET"])
+def auth_me():
+    user_id = auth_service.current_user_id(request)
+    if user_id is None:
+        return api_error("UNAUTHORIZED", "토큰이 없거나 만료되었습니다.", 401)
+    db = database.load_db()
+    user = database.find_user(db, user_id)
+    if user is None:
+        return api_error("UNAUTHORIZED", "존재하지 않는 사용자입니다.", 401)
+    return jsonify({
+        "user": user,
+        "cases": sum(1 for m in db["missing"] if m.get("guardian_id") == user_id),
+        "reports": sum(1 for r in db["reports"] if r.get("reporter_id") == user_id),
+    })
+
+
+# ── 18) 내 제보 이력 — S8 ───────────────────────────────
+@app.route("/me/reports", methods=["GET"])
+def my_reports():
+    """토큰 있으면 계정 기준, 없으면 X-Device-Hash 기준 (게스트도 자기 제보는 봄)."""
+    db = database.load_db()
+    user_id = auth_service.current_user_id(request)
+    device_hash = request.headers.get("X-Device-Hash")
+
+    if user_id:
+        mine = [r for r in db["reports"] if r.get("reporter_id") == user_id]
+    elif device_hash:
+        mine = [r for r in db["reports"] if r.get("device_hash") == device_hash]
+    else:
+        return api_error("VALIDATION_ERROR", "Authorization 또는 X-Device-Hash 헤더가 필요합니다.", 400)
+
+    items = []
+    for r in sorted(mine, key=lambda x: x["observed_at"], reverse=True):
+        m = database.find_missing(db, r["missing_id"])
+        items.append({
+            "id": r["id"],
+            "missing_name": m["name"] if m else None,
+            "missing_thumbnail": f"/uploads/{thumb_name(m['photos'][0])}" if m and m.get("photos") else None,
+            "missing_status": m["status"] if m else None,
+            "similarity": r["similarity"],
+            "grade": r["grade"],
+            "observed_at": r["observed_at"],
+            "contributed_to_path": r.get("route_index") is not None,
+        })
+    return jsonify({"count": len(items), "items": items})
+
+
 # ── 5) 실종자 등록 — S7 ─────────────────────────────────
 @app.route("/missing", methods=["POST"])
 def register_missing():
@@ -245,6 +335,7 @@ def register_missing():
         "encoded_photos": encoded_photos,  # encodings[i]가 어떤 사진의 벡터인지
         "encodings": encodings,
         "status": "active",
+        "guardian_id": auth_service.current_user_id(request),  # 로그인 시 보호자 귀속
         "created_at": now.isoformat(),
     }
     db["missing"].append(missing)
@@ -444,6 +535,7 @@ def create_report():
         "status": "visible",
         "confirmed": False,
         "device_hash": device_hash,
+        "reporter_id": auth_service.current_user_id(request),  # 로그인 시 계정 귀속
     }
     db["reports"].append(report)
     changed = recompute_route_indexes(db, m["id"])

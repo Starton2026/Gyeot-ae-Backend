@@ -4,3 +4,4 @@ cmake
 dlib
 face_recognition
 firebase-admin
+requests

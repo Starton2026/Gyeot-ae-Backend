@@ -5,7 +5,7 @@ import uuid
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "db.json")
 
-_DEFAULT = {"missing": [], "reports": [], "analyses": []}
+_DEFAULT = {"missing": [], "reports": [], "analyses": [], "users": []}
 
 
 def load_db():
@@ -42,6 +42,20 @@ def find_analysis(db, analysis_id):
     for a in db["analyses"]:
         if a["id"] == analysis_id:
             return a
+    return None
+
+
+def find_user(db, user_id):
+    for u in db["users"]:
+        if u["id"] == user_id:
+            return u
+    return None
+
+
+def find_user_by_kakao(db, kakao_id):
+    for u in db["users"]:
+        if u["kakao_id"] == kakao_id:
+            return u
     return None
 
 
