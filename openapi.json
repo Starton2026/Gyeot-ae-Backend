@@ -179,14 +179,15 @@
       "post": {
         "tags": ["missing"],
         "summary": "실종자 등록 (S7) — 사진 다중",
-        "description": "사진 여러 장의 얼굴 벡터를 전부 저장하고 제보 대조 시 최고 유사도를 채택합니다. 모든 사진에서 얼굴 미검출이면 400.",
+        "description": "**로그인 필수.** 등록한 사람이 그 사건의 보호자가 됩니다. 사진 여러 장의 얼굴 벡터를 전부 저장하고 제보 대조 시 최고 유사도를 채택합니다. 모든 사진에서 얼굴 미검출이면 400.",
+        "security": [{ "bearerAuth": [] }],
         "requestBody": {
           "required": true,
           "content": {
             "multipart/form-data": {
               "schema": {
                 "type": "object",
-                "required": ["name", "last_lat", "last_lng", "photos"],
+                "required": ["name", "age", "gender", "category", "description", "last_lat", "last_lng", "missing_at", "guardian_phone", "photos"],
                 "properties": {
                   "name": { "type": "string", "example": "김하준" },
                   "age": { "type": "integer", "example": 7 },
@@ -208,7 +209,8 @@
         },
         "responses": {
           "201": { "description": "등록 완료", "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "photos": { "type": "array", "items": { "type": "string" } }, "face_encoding_count": { "type": "integer" }, "notified_devices": { "type": "integer", "description": "푸시 인프라 미구현 — 항상 0" } } } } } },
-          "400": { "description": "필수 누락 또는 전체 얼굴 미검출(FACE_NOT_FOUND)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+          "400": { "description": "필수 누락(VALIDATION_ERROR, field에 항목명) 또는 전체 얼굴 미검출(FACE_NOT_FOUND)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "토큰 없음·만료" }
         }
       },
       "get": {

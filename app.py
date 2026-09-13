@@ -356,20 +356,61 @@ def resolve_missing(missing_id):
 # ── 5) 실종자 등록 — S7 ─────────────────────────────────
 @app.route("/missing", methods=["POST"])
 def register_missing():
+    """실종자 등록. **토큰 필수**(명세서 5).
+
+    허위 등록을 막으려고 보호자 확인을 요구한다. 등록한 사람이 그 사건의
+    보호자가 되고, 발견 완료·정보 수정은 그 사람만 할 수 있다.
+
+    필수 항목은 사진을 저장하기 **전에** 전부 검사한다. 저장부터 하면 틀린
+    요청마다 사진 파일이 남는다.
+    """
+    user_id = auth_service.current_user_id(request)
+    if user_id is None:
+        return api_error("UNAUTHORIZED", "실종자 등록은 로그인이 필요합니다.", 401)
+
     photos = request.files.getlist("photos") or request.files.getlist("photos[]")
     if not photos and request.files.get("photo"):  # 구버전 단일 photo 호환
         photos = [request.files["photo"]]
-    name = request.form.get("name")
+    form = request.form
 
+    def text(key):
+        return (form.get(key) or "").strip()
+
+    name = text("name")
     if not name:
-        return api_error("VALIDATION_ERROR", "name은 필수입니다.", 400, "name")
-    if not photos:
-        return api_error("VALIDATION_ERROR", "photos는 1장 이상 필수입니다.", 400, "photos")
+        return api_error("VALIDATION_ERROR", "이름을 입력해 주세요.", 400, "name")
     try:
-        last_lat = float(request.form["last_lat"])
-        last_lng = float(request.form["last_lng"])
+        age = int(text("age"))
+        if age < 0:
+            raise ValueError
+    except ValueError:
+        return api_error("VALIDATION_ERROR", "나이를 숫자로 입력해 주세요.", 400, "age")
+    gender = text("gender")
+    if gender not in ("male", "female", "other"):
+        return api_error("VALIDATION_ERROR", "성별을 골라 주세요.", 400, "gender")
+    category = text("category")
+    if category not in ("child", "elderly", "other"):
+        return api_error("VALIDATION_ERROR", "구분을 골라 주세요.", 400, "category")
+    description = text("description")
+    if not description:
+        return api_error("VALIDATION_ERROR", "인상착의를 입력해 주세요.", 400, "description")
+    try:
+        last_lat = float(form["last_lat"])
+        last_lng = float(form["last_lng"])
     except (KeyError, ValueError):
-        return api_error("VALIDATION_ERROR", "last_lat/last_lng는 숫자로 필수입니다.", 400, "last_lat")
+        return api_error("VALIDATION_ERROR", "마지막 목격 위치를 골라 주세요.", 400, "last_lat")
+    missing_at = text("missing_at")
+    if not missing_at:
+        return api_error("VALIDATION_ERROR", "실종 일시를 입력해 주세요.", 400, "missing_at")
+    try:
+        missing_at = parse_dt(missing_at).isoformat()
+    except ValueError:
+        return api_error("VALIDATION_ERROR", "실종 일시 형식이 올바르지 않습니다.", 400, "missing_at")
+    guardian_phone = text("guardian_phone")
+    if not guardian_phone:
+        return api_error("VALIDATION_ERROR", "보호자 연락처를 입력해 주세요.", 400, "guardian_phone")
+    if not photos:
+        return api_error("VALIDATION_ERROR", "사진을 한 장 이상 올려 주세요.", 400, "photos")
 
     # 사진 저장 + 얼굴 인코딩 (얼굴 있는 사진의 벡터를 전부 저장)
     saved, encodings, encoded_photos = [], [], []
@@ -393,33 +434,34 @@ def register_missing():
             400, "photos",
         )
 
-    now = now_kst()
-    missing_at = request.form.get("missing_at")
-    try:
-        missing_at = parse_dt(missing_at).isoformat() if missing_at else now.isoformat()
-    except ValueError:
-        return api_error("VALIDATION_ERROR", "missing_at 형식이 올바르지 않습니다.", 400, "missing_at")
+    def optional_int(key):
+        # 키·몸무게는 선택이다. 이상한 값이 와도 등록을 막지 않고 비워 둔다.
+        try:
+            return int(text(key)) if text(key) else None
+        except ValueError:
+            return None
 
+    now = now_kst()
     db = database.load_db()
     missing = {
         "id": database.new_id("m_"),
         "name": name,
-        "age": int(request.form["age"]) if request.form.get("age") else None,
-        "gender": request.form.get("gender"),
-        "category": request.form.get("category", "other"),
-        "description": request.form.get("description", ""),
-        "height_cm": int(request.form["height_cm"]) if request.form.get("height_cm") else None,
-        "weight_kg": int(request.form["weight_kg"]) if request.form.get("weight_kg") else None,
+        "age": age,
+        "gender": gender,
+        "category": category,
+        "description": description,
+        "height_cm": optional_int("height_cm"),
+        "weight_kg": optional_int("weight_kg"),
         "last_lat": last_lat,
         "last_lng": last_lng,
-        "last_address": request.form.get("last_address"),
+        "last_address": text("last_address") or None,
         "missing_at": missing_at,
-        "guardian_phone": request.form.get("guardian_phone", ""),  # 제보자 비공개
+        "guardian_phone": guardian_phone,  # 제보자 비공개
         "photos": saved,
         "encoded_photos": encoded_photos,  # encodings[i]가 어떤 사진의 벡터인지
         "encodings": encodings,
         "status": "active",
-        "guardian_id": auth_service.current_user_id(request),  # 로그인 시 보호자 귀속
+        "guardian_id": user_id,
         "created_at": now.isoformat(),
     }
     db["missing"].append(missing)
