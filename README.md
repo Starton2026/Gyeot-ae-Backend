@@ -54,9 +54,18 @@ AI: 얼굴대조 → 유사도 % 계산 → 60% 이상이면 매칭!
 
 ### AI 얼굴대조 원리
 
-1. 실종자 등록 시 사진에서 **128차원 얼굴 특징 벡터**를 1회 추출해 저장
-2. 제보 사진이 들어오면 벡터 간 **유클리드 거리**를 계산
-3. `유사도(%) = (1 - 거리) × 100`, **60% 이상이면 매칭**으로 판단
+1. 실종자 등록 시 사진(여러 장)에서 **128차원 얼굴 특징 벡터**를 추출해 전부 저장
+2. 제보 사진이 들어오면 각 벡터와 **유클리드 거리**를 계산해 **최고 유사도 채택**
+3. `유사도(%) = (1 - 거리) × 100` → 등급 부여
+
+| 등급 | 구간 | 경로(route_index) |
+|---|---|---|
+| `high` | 60% 이상 | 부여 |
+| `medium` | 40 ~ 60% | 부여 |
+| `low` | 40% 미만 | 제외 (저장은 함) |
+| `no_face` | 얼굴 미검출 | 제외 (에러 아님 — 저장) |
+
+**모든 제보를 저장합니다.** 임계값은 표시 등급과 경로 포함 여부만 결정합니다.
 
 ---
 
@@ -65,8 +74,9 @@ AI: 얼굴대조 → 유사도 % 계산 → 60% 이상이면 매칭!
 ```
 Gyeot-ae-Backend/
 ├── app.py              # Flask 엔트리 + API 라우팅
-├── face_service.py     # 얼굴대조 AI (인코딩 추출/비교, 임계값 60%)
+├── face_service.py     # 얼굴대조 AI (다중 인코딩 비교, 등급제)
 ├── db.py               # JSON DB 읽기/쓰기 헬퍼
+├── utils.py            # KST 시각·거리·방위 계산
 ├── firebase_service.py # Firestore 실시간 푸시 (키 있으면 자동 활성화)
 ├── seed.py             # 데모용 시드 데이터 생성 스크립트
 ├── requirements.txt    # 의존성 목록
@@ -130,8 +140,8 @@ BASE_URL=https://xxxx.ngrok.io python app.py
 
 | 컬렉션 | 문서 | 주요 필드 |
 |---|---|---|
-| `missing/{missing_id}` | 실종자 | name, description, last_lat/lng, photo_url, status |
-| `reports/{report_id}` | 제보 | missing_id, lat, lng, similarity, is_match, photo_url, reported_at, timestamp |
+| `missing/{missing_id}` | 실종자 | name, age, category, last_lat/lng, missing_at, status, photo_urls[], thumbnail_url |
+| `reports/{report_id}` | 제보 | missing_id, lat, lng, place_name, observed_at, similarity, grade, route_index, photo_url |
 
 ### 프론트(관제 화면) 구독 예시
 
@@ -141,124 +151,140 @@ import { collection, query, where, orderBy, onSnapshot } from "firebase/firestor
 const q = query(
   collection(db, "reports"),
   where("missing_id", "==", missingId),
-  where("is_match", "==", true),
-  orderBy("timestamp")
+  orderBy("observed_at")
 );
 onSnapshot(q, (snap) => {
   const reports = snap.docs.map((d) => d.data());
-  // reports를 시간순으로 폴리라인 + 핀으로 그리면 끝.
+  // route_index가 있는 제보만 시간순 폴리라인으로, 나머지는 회색 핀으로.
   // 새 제보가 오면 이 콜백이 자동 호출됨 → 핀이 실시간으로 추가!
 });
 ```
 
-> Firebase를 안 쓰는 경우: 관제 화면에서 `GET /reports/<id>?only_match=1`을 2~3초마다 폴링해도 데모에는 충분합니다.
+> ⚠️ `where + orderBy` 조합은 Firestore **복합 인덱스**가 필요합니다. 첫 실행 시 에러 메시지에 뜨는 링크를 클릭하면 자동 생성됩니다 — 데모 전에 미리 한 번 실행해두세요.
+>
+> Firebase를 안 쓰는 경우: 관제 화면에서 `GET /missing/{id}/reports`를 2~3초마다 폴링해도 데모에는 충분합니다.
 
 ---
 
 ## 📡 API 명세
 
-Base URL: 로컬 `http://localhost:5001`, 데모는 ngrok URL.
-업로드는 모두 `multipart/form-data`이며 CORS가 열려 있습니다.
+> 2026-09-12 디자인 확정본 기준. 상세 스키마는 API 명세서 문서 참조.
+> 모든 시각은 ISO 8601 + KST 오프셋 (`2026-09-13T14:40:00+09:00`).
+> 게스트 요청은 `X-Device-Hash` 헤더 권장 (제보 남용 방지 기준).
 
 ### 한눈에 보기
 
-| # | 메서드 | 경로 | 역할 | 사용 화면 |
+| # | 메서드 | 경로 | 역할 | 화면 |
 |---|---|---|---|---|
-| 1 | `POST` | `/missing` | 실종자 등록 | 보호자 — 실종 등록 |
-| 2 | `POST` | `/report` | 제보 접수 + **얼굴대조 실행** | 시민 — 제보하기 |
-| 3 | `GET` | `/reports/<missing_id>` | 제보 목록/이동 경로 | 관제 — 지도 |
-| 4 | `GET` | `/missing` | 실종자 목록 | 시민 — 홈 |
-| 5 | `GET` | `/uploads/<filename>` | 사진 서빙 | 공통 |
+| 1 | `POST` | `/missing` | 실종자 등록 (사진 다중) | S7 |
+| 2 | `GET` | `/missing` | 목록 (검색·필터·정렬·긴급도) | S1·S2·S5 |
+| 3 | `GET` | `/missing/{id}` | 상세 | S3 |
+| 4 | `POST` | `/reports/analyze` | **사진 분석** (제보 전 단계) | S4-1 |
+| 5 | `POST` | `/reports` | **제보 확정** | S4 |
+| 6 | `GET` | `/missing/{id}/reports` | 제보 목록 + 경로 + 슬라이더 | S3·S5 |
+| 7 | `GET` | `/uploads/{filename}` | 사진 서빙 (`{이름}_thumb.jpg` 썸네일) | 공통 |
 
-### 1) 실종자 등록 — 보호자
+구 API(`POST /report`, `GET /reports/{id}`)는 하위 호환 어댑터로 유지됩니다.
 
-`POST /missing` (form-data)
-
-| 필드 | 타입 | 예시 |
-|---|---|---|
-| `name` | string | `"김순자"` |
-| `description` | string | `"빨간 패딩, 검은 바지, 70대 여성"` |
-| `last_lat` / `last_lng` | number | `37.5665` / `126.9780` |
-| `photo` | file | 실종자 사진 (얼굴 잘 보이게) |
+### 에러 포맷 (공통)
 
 ```json
-// 성공
-{ "message": "실종자 등록 완료", "missing_id": "ab12cd34", "name": "김순자" }
-// 실패 400
-{ "error": "사진에서 얼굴을 찾지 못했습니다. 얼굴이 잘 보이는 사진을 올려주세요." }
+{ "error": { "code": "FACE_NOT_FOUND", "message": "...", "field": "photos" } }
 ```
+
+`VALIDATION_ERROR`(400) · `FACE_NOT_FOUND`(400, 등록만) · `NOT_FOUND`(404) · `ANALYSIS_EXPIRED`(410) · `RATE_LIMITED`(429)
+
+### 1) 실종자 등록
+
+`POST /missing` (multipart/form-data)
+
+| 필드 | 필수 | 설명 |
+|---|---|---|
+| `name`, `last_lat`, `last_lng`, `photos[]` | O | 사진 다중 — 첫 장이 대표 |
+| `age`, `gender`, `category`, `description`, `missing_at`, `guardian_phone` | 권장 | `category`: child/elderly/other |
+| `last_address`, `height_cm`, `weight_kg` | X | |
 
 ```bash
 curl -X POST http://localhost:5001/missing \
-  -F "name=김순자" -F "description=빨간 패딩, 70대 여성" \
-  -F "last_lat=37.5665" -F "last_lng=126.9780" \
-  -F "photo=@face.jpg"
+  -F "name=김하준" -F "age=7" -F "gender=male" -F "category=child" \
+  -F "description=노란 후드티, 검정 백팩" \
+  -F "last_lat=37.4491" -F "last_lng=126.7312" \
+  -F "missing_at=2026-09-13T14:40:00+09:00" -F "guardian_phone=010-0000-0000" \
+  -F "photos=@face1.jpg" -F "photos=@face2.jpg"
 ```
 
-### 2) 제보 접수 — 시민 ★ 얼굴대조 실행 지점
+응답 `201`: `{ id, name, photos[], face_encoding_count, notified_devices }`
+모든 사진에서 얼굴 미검출 시 `400 FACE_NOT_FOUND`.
 
-`POST /report` (form-data)
+### 2) 실종자 목록
 
-| 필드 | 타입 | 예시 |
-|---|---|---|
-| `missing_id` | string | `"ab12cd34"` |
-| `lat` / `lng` | number | GPS 자동 첨부 |
-| `photo` | file | 목격 사진 |
+`GET /missing?q=&category=all&status=active&sort=urgency&lat=&lng=&radius_km=&cursor=0&limit=20`
+
+- `sort`: `urgency`(기본) / `recent` / `distance`
+- `lat`/`lng` 전달 시 `distance_km` 포함, 긴급도의 거리 가중치 반영
+- 응답: `{ count, next_cursor, items:[{ id, name, age, thumbnail, elapsed_minutes, urgency_score, urgency_level, report_count, ... }] }`
+- `elapsed_minutes`는 서버 시각 기준 계산 (클라이언트 계산 금지)
+
+### 3) 실종자 상세
+
+`GET /missing/{id}` → 기본 정보 + `photos[]`, `elapsed_minutes`, `report_count`, `match_count`
+
+### 4) 사진 분석 ★ (제보 전 단계)
+
+`POST /reports/analyze` (multipart: `missing_id`, `photo`)
 
 ```json
 {
-  "message": "김순자님과 유사한 인물이 제보되었습니다!",
-  "report_id": "ef56gh78",
-  "similarity": 88.5,
-  "face_found": true,
-  "is_match": true,
-  "alert": true
+  "analysis_id": "an_7x9k2m",
+  "similarity": 63.4, "grade": "high", "face_found": true,
+  "photo_url": "/uploads/tmp/an_7x9k2m.jpg",
+  "matched_photo_url": "/uploads/m_xxx_1.jpg",
+  "expires_at": "2026-09-13T15:10:00+09:00"
 }
 ```
 
-```bash
-curl -X POST http://localhost:5001/report \
-  -F "missing_id=ab12cd34" \
-  -F "lat=37.5700" -F "lng=126.9820" \
-  -F "photo=@sighting.jpg"
+- 얼굴 미검출은 **에러가 아님** — `similarity: null, grade: "no_face"`로 응답, 제보 가능
+- 임시 사진은 `uploads/tmp/`, **TTL 10분** (만료 시 자동 삭제)
+- `matched_photo_url`: 여러 등록 사진 중 최고 유사도를 낸 사진
+
+### 5) 제보 확정 ★
+
+`POST /reports` (application/json)
+
+```json
+{ "analysis_id": "an_7x9k2m", "lat": 37.4622, "lng": 126.7401,
+  "place_name": "만수주공 앞 버스정류장", "observed_at": "2026-09-13T17:12:00+09:00" }
 ```
 
-### 3) 제보 목록 / 이동 경로 — 관제 지도 ★ 데모의 얼굴
+응답 `201`: `{ id, missing_id, similarity, grade, route_index, photo_url, observed_at, created_at, guardian_notified }`
 
-`GET /reports/<missing_id>?only_match=1` (`only_match=1`이면 매칭된 제보만)
+- `observed_at`(목격 시각, 경로 정렬 기준)과 `created_at`(전송 시각)은 분리
+- `route_index`는 유사도 40% 이상만 부여, 미만은 `null`
+- 분석 만료 시 `410 ANALYSIS_EXPIRED`
+- 게스트 제한: 사건 1건당 `X-Device-Hash` 기준 10분 내 3회 → 초과 시 `429`
+
+### 6) 제보 목록 / 이동 경로 ★
+
+`GET /missing/{id}/reports?min_similarity=0&include_low=true&until=`
 
 ```json
 {
-  "missing_id": "ab12cd34",
-  "count": 2,
-  "reports": [
-    { "id": "...", "lat": 37.57, "lng": 126.98, "photo": "report_x.jpg",
-      "similarity": 88.5, "is_match": true, "reported_at": "2026-09-10T22:01:00" }
-  ],
-  "path": [
-    { "lat": 37.5700, "lng": 126.9820, "time": "2026-09-10T22:01:00" },
-    { "lat": 37.5720, "lng": 126.9850, "time": "2026-09-10T22:20:00" }
-  ]
+  "count": 6, "hidden_count": 0,
+  "origin": { "lat": ..., "lng": ..., "address": "...", "at": "..." },
+  "reports": [ { "route_index": 3, "grade": "high", "gap_minutes": 42,
+                 "bearing": "SE", "distance_from_prev_km": 1.4, ... } ],
+  "path": [ { "lat": ..., "lng": ..., "at": "...", "index": 0, "origin": true }, ... ],
+  "time_range": { "from": "...", "to": "...", "ticks": [...] }
 }
 ```
 
-> `path`는 **시간순 정렬**되어 있어, 그대로 지도 폴리라인으로 연결하면 이동 경로가 됩니다.
+- `reports`는 **최신순** (타임라인용), `path`는 **시간순** + 최초 실종 지점 포함 (폴리라인용) — 방향이 반대인 것은 의도된 것
+- `until`: 시간 슬라이더 — 해당 시각까지의 제보만
+- `min_similarity=60`: 지도·타임라인 필터 토글용 (`hidden_count`에 숨긴 건수)
 
-### 4) 실종자 목록
+### 7) 사진 서빙
 
-`GET /missing`
-
-```json
-{ "count": 2, "missing": [ { "id": "...", "name": "...", "description": "...",
-  "last_lat": 37.5665, "last_lng": 126.9780, "photo": "...", "status": "실종중",
-  "registered_at": "..." } ] }
-```
-
-### 5) 사진 가져오기
-
-`GET /uploads/<filename>` → 이미지 파일. `<img src="{BASE}/uploads/report_x.jpg">`로 표시.
-
----
+`GET /uploads/{filename}` — 썸네일은 `{이름}_thumb.jpg` 규칙 (목록에서는 썸네일 사용)
 
 ## 🎬 데모 시나리오
 

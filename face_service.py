@@ -1,8 +1,16 @@
-"""얼굴대조 AI 로직 (face_recognition / dlib 기반)."""
+"""얼굴대조 AI 로직 (face_recognition / dlib 기반).
+
+등급 체계 (2026-09-12 디자인 확정본 기준, high는 실측값에 맞춰 60으로 조정):
+- high    : similarity >= 60   → route_index 부여
+- medium  : 40 <= s < 60       → route_index 부여
+- low     : s < 40             → 저장하되 경로 제외
+- no_face : 얼굴 미검출        → 저장하되 경로 제외 (에러 아님)
+"""
 import face_recognition
 import numpy as np
 
-SIMILARITY_THRESHOLD = 60  # 이 값(%) 이상이면 매칭으로 판단
+SIMILARITY_HIGH = 60   # high 등급 기준 (실측: 동일 인물 정면 사진 65.4%)
+SIMILARITY_ROUTE = 40  # 경로(route_index) 포함 기준
 
 
 def get_face_encoding(path):
@@ -14,21 +22,30 @@ def get_face_encoding(path):
     return encodings[0]  # 여러 명이면 첫 번째 얼굴 사용
 
 
-def compare_faces(known_encoding, path):
-    """등록된 실종자 인코딩과 제보 사진을 비교.
+def best_similarity(known_encodings, path):
+    """등록 사진 인코딩들(여러 장)과 제보 사진을 비교해 최고 유사도 채택.
 
-    returns: (similarity %, face_found, is_match)
-    - 얼굴 미검출 시 similarity=0, face_found=False
+    returns: (similarity float|None, face_found bool, best_photo_index int|None)
     - 유사도% = (1 - face_distance) * 100, 소수 1자리 반올림
     """
     report_encoding = get_face_encoding(path)
     if report_encoding is None:
-        return 0.0, False, False
+        return None, False, None
 
-    distance = face_recognition.face_distance(
-        [np.array(known_encoding)], report_encoding
-    )[0]
-    # numpy 타입은 JSON 직렬화가 안 되므로 파이썬 기본 타입으로 변환
-    similarity = round(max(0.0, float(1 - distance)) * 100, 1)
-    is_match = bool(similarity >= SIMILARITY_THRESHOLD)
-    return similarity, True, is_match
+    distances = face_recognition.face_distance(
+        np.array(known_encodings), report_encoding
+    )
+    best = int(np.argmin(distances))
+    similarity = round(max(0.0, float(1 - distances[best])) * 100, 1)
+    return similarity, True, best
+
+
+def grade_of(similarity, face_found):
+    """유사도 → 등급 문자열."""
+    if not face_found:
+        return "no_face"
+    if similarity >= SIMILARITY_HIGH:
+        return "high"
+    if similarity >= SIMILARITY_ROUTE:
+        return "medium"
+    return "low"

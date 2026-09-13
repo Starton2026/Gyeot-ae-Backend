@@ -4,11 +4,11 @@ serviceAccountKey.json(Firebase 콘솔에서 발급)이 프로젝트 루트에 �
 없으면 조용히 비활성화되어 기존 JSON DB만으로 동작한다.
 
 프론트(관제 화면)는 Firestore를 onSnapshot으로 구독해서
-제보가 들어오는 순간 지도에 핀을 실시간으로 찍을 수 있다.
+제보가 들어오는 순간 지도·타임라인에 실시간 반영할 수 있다.
 
 컬렉션 구조:
-- missing/{missing_id}  : 실종자 정보 (encoding 제외)
-- reports/{report_id}   : 제보 (missing_id, lat, lng, similarity, is_match, photo_url, ...)
+- missing/{missing_id}  : 실종자 정보 (encodings 제외)
+- reports/{report_id}   : 제보 (observed_at, similarity, grade, route_index, photo_url ...)
 """
 import os
 
@@ -45,12 +45,13 @@ def photo_url(filename):
 
 
 def push_missing(missing):
-    """실종자 등록을 Firestore에 기록 (encoding은 제외)."""
+    """실종자 등록/변경을 Firestore에 기록 (encodings는 제외)."""
     if _db is None:
         return
     try:
-        doc = {k: v for k, v in missing.items() if k != "encoding"}
-        doc["photo_url"] = photo_url(missing["photo"])
+        doc = {k: v for k, v in missing.items() if k != "encodings"}
+        doc["photo_urls"] = [photo_url(p) for p in missing.get("photos", [])]
+        doc["thumbnail_url"] = photo_url(missing["photos"][0]) if missing.get("photos") else None
         _db.collection("missing").document(missing["id"]).set(doc)
     except Exception as e:  # Firestore 장애가 본 API를 죽이면 안 됨
         print(f"[firebase] missing 푸시 실패: {e}")
@@ -67,3 +68,11 @@ def push_report(report, missing_name):
         _db.collection("reports").document(report["id"]).set(doc)
     except Exception as e:
         print(f"[firebase] report 푸시 실패: {e}")
+
+
+def push_case_reports(reports, missing_name):
+    """사건의 제보들을 일괄 갱신 (route_index 재계산 후 사용)."""
+    if _db is None:
+        return
+    for r in reports:
+        push_report(r, missing_name)
