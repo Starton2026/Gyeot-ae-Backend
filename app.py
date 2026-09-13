@@ -151,6 +151,8 @@ def missing_summary(db, m, user_lat=None, user_lng=None):
         "missing_at": m["missing_at"],
         "elapsed_minutes": elapsed_minutes(m["missing_at"]),
         "status": m["status"],
+        # 끝난 사건은 언제 찾았는지가 카드의 핵심 정보다(S8 지난 사건).
+        "resolved_at": m.get("resolved_at"),
         "report_count": len(database.case_reports(db, m["id"])),
         "urgency_score": urgency_score(db, m, user_lat, user_lng),
         "urgency_level": urgency_level(m),
@@ -260,6 +262,10 @@ def my_reports():
         items.append({
             "id": r["id"],
             "missing_name": m["name"] if m else None,
+            # 이름만으로는 누구인지 잘 안 떠오른다. MY 화면이 "김하준 · 7세"로
+            # 적을 수 있게 나이와 성별을 함께 준다.
+            "missing_age": m.get("age") if m else None,
+            "missing_gender": m.get("gender") if m else None,
             "missing_thumbnail": f"/uploads/{thumb_name(m['photos'][0])}" if m and m.get("photos") else None,
             "missing_status": m["status"] if m else None,
             "similarity": r["similarity"],
@@ -268,6 +274,35 @@ def my_reports():
             "contributed_to_path": r.get("route_index") is not None,
         })
     return jsonify({"count": len(items), "items": items})
+
+
+# ── 내가 등록한 실종자 — S8 ─────────────────────────────
+@app.route("/me/missing", methods=["GET"])
+def my_missing():
+    """내가 보호자인 사건 목록.
+
+    **명세서 엔드포인트 목록에는 없다.** 기능정의서 F-8.3(내가 등록한 실종자)과
+    F-8.5(재등록)가 이 목록을 전제로 하는데 경로가 빠져 있어 추가했다. 응답은
+    `GET /missing`의 항목과 같은 모양이라 앱이 쓰던 모델을 그대로 쓴다.
+    """
+    user_id = auth_service.current_user_id(request)
+    if user_id is None:
+        return api_error("UNAUTHORIZED", "토큰이 없거나 만료되었습니다.", 401)
+
+    db = database.load_db()
+    mine = [m for m in db["missing"] if m.get("guardian_id") == user_id]
+    items = [missing_summary(db, m) for m in mine]
+
+    # 최근 실종 순으로 두고, 진행 중을 위로 올린다. 파이썬 정렬은 안정적이라
+    # 두 번 돌리면 "진행 중 최신 → 지난 사건 최신"이 된다.
+    items.sort(key=lambda s: s["missing_at"], reverse=True)
+    items.sort(key=lambda s: s["status"] == "resolved")
+
+    return jsonify({
+        "count": len(items),
+        "active": sum(1 for s in items if s["status"] == "active"),
+        "items": items,
+    })
 
 
 # ── 5) 실종자 등록 — S7 ─────────────────────────────────

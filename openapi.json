@@ -140,7 +140,19 @@
         "description": "토큰이 있으면 계정 기준, 없으면 `X-Device-Hash` 기준 (게스트도 자기 제보는 볼 수 있음).",
         "security": [{ "bearerAuth": [] }, { "deviceHash": [] }],
         "responses": {
-          "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "count": { "type": "integer" }, "items": { "type": "array", "items": { "type": "object", "properties": { "id": { "type": "string" }, "missing_name": { "type": "string" }, "missing_thumbnail": { "type": "string", "nullable": true }, "missing_status": { "type": "string" }, "similarity": { "type": "number", "nullable": true }, "grade": { "$ref": "#/components/schemas/Grade" }, "observed_at": { "type": "string" }, "contributed_to_path": { "type": "boolean", "description": "내 제보가 실제 경로에 포함됐는지" } } } } } } } } }
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "count": { "type": "integer" }, "items": { "type": "array", "items": { "type": "object", "properties": { "id": { "type": "string" }, "missing_name": { "type": "string" }, "missing_age": { "type": "integer", "nullable": true }, "missing_gender": { "type": "string", "nullable": true }, "missing_thumbnail": { "type": "string", "nullable": true }, "missing_status": { "type": "string" }, "similarity": { "type": "number", "nullable": true }, "grade": { "$ref": "#/components/schemas/Grade" }, "observed_at": { "type": "string" }, "contributed_to_path": { "type": "boolean", "description": "내 제보가 실제 경로에 포함됐는지" } } } } } } } } }
+        }
+      }
+    },
+    "/me/missing": {
+      "get": {
+        "tags": ["me"],
+        "summary": "내가 등록한 실종자 (S8)",
+        "description": "내가 보호자인 사건 목록. 진행 중이 먼저, 각각 최근 실종 순.\n\n\n\n항목은 `GET /missing`과 같은 모양이라 앱이 목록에 쓰던 모델을 그대로 씁니다.",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "count": { "type": "integer" }, "active": { "type": "integer", "description": "진행 중인 사건 수" }, "items": { "type": "array", "items": { "$ref": "#/components/schemas/MissingSummary" } } } } } } },
+          "401": { "description": "토큰 없음·만료" }
         }
       }
     },
