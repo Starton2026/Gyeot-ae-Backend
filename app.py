@@ -636,6 +636,37 @@ def case_reports_api(missing_id):
     })
 
 
+# ── API 문서 (Swagger UI) ────────────────────────────────
+@app.route("/openapi.json", methods=["GET"])
+def openapi_spec():
+    return send_from_directory(os.path.dirname(__file__), "openapi.json")
+
+
+@app.route("/docs", methods=["GET"])
+def swagger_ui():
+    return """<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>곁애 API 문서</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.17.14/swagger-ui.min.css">
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.17.14/swagger-ui-bundle.min.js"></script>
+  <script>
+    SwaggerUIBundle({
+      url: "/openapi.json",
+      dom_id: "#swagger-ui",
+      docExpansion: "list",
+      defaultModelsExpandDepth: 0,
+      tryItOutEnabled: true,
+    });
+  </script>
+</body>
+</html>"""
+
+
 # ── 19) 사진 서빙 ────────────────────────────────────────
 @app.route("/uploads/<path:filename>", methods=["GET"])
 def serve_upload(filename):

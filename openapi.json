@@ -1,0 +1,293 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "곁애 (Gyeot-ae) API",
+    "description": "실종 아동·어르신 조기 발견 네트워크 백엔드.\n\n- 모든 시각은 ISO 8601 + KST 오프셋 (`2026-09-13T14:40:00+09:00`)\n- 게스트 요청은 `X-Device-Hash` 헤더 권장 (제보 남용 방지·이력 귀속 기준)\n- 로그인 필요 시 `Authorization: Bearer <token>` (POST /auth/kakao 로 발급)",
+    "version": "1.0.0"
+  },
+  "servers": [
+    { "url": "http://localhost:5001", "description": "로컬" }
+  ],
+  "tags": [
+    { "name": "auth", "description": "카카오 로그인 (S6)" },
+    { "name": "missing", "description": "실종자 (S1·S2·S3·S7)" },
+    { "name": "reports", "description": "제보 — 분석·확정 2단계 (S4·S4-1)" },
+    { "name": "me", "description": "내 이력 (S8)" },
+    { "name": "files", "description": "사진 서빙" },
+    { "name": "legacy", "description": "구 API (deprecated, 하위 호환용)" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer" },
+      "deviceHash": { "type": "apiKey", "in": "header", "name": "X-Device-Hash" }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": { "type": "string", "example": "FACE_NOT_FOUND", "description": "VALIDATION_ERROR | FACE_NOT_FOUND | UNAUTHORIZED | NOT_FOUND | ANALYSIS_EXPIRED | RATE_LIMITED" },
+              "message": { "type": "string" },
+              "field": { "type": "string", "nullable": true }
+            }
+          }
+        }
+      },
+      "Grade": {
+        "type": "string",
+        "enum": ["high", "medium", "low", "no_face"],
+        "description": "high: 60%↑ / medium: 40~60% / low: 40%↓ / no_face: 얼굴 미검출. low·no_face는 저장되지만 route_index 없음"
+      },
+      "MissingSummary": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "example": "m_ab12cd34" },
+          "name": { "type": "string", "example": "김하준" },
+          "age": { "type": "integer", "nullable": true, "example": 7 },
+          "gender": { "type": "string", "nullable": true, "example": "male" },
+          "category": { "type": "string", "example": "child" },
+          "description": { "type": "string" },
+          "thumbnail": { "type": "string", "nullable": true, "example": "/uploads/m_xxx_thumb.jpg" },
+          "last_lat": { "type": "number" },
+          "last_lng": { "type": "number" },
+          "last_address": { "type": "string", "nullable": true },
+          "missing_at": { "type": "string", "format": "date-time" },
+          "elapsed_minutes": { "type": "integer", "description": "서버 시각 기준 계산" },
+          "status": { "type": "string", "enum": ["active", "resolved"] },
+          "report_count": { "type": "integer" },
+          "urgency_score": { "type": "number", "example": 9.0 },
+          "urgency_level": { "type": "string", "enum": ["critical", "high", "normal", "resolved"] },
+          "distance_km": { "type": "number", "description": "쿼리에 lat/lng 전달 시에만" }
+        }
+      },
+      "Report": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "example": "r_ef56gh78" },
+          "route_index": { "type": "integer", "nullable": true, "description": "유사도 40%↑만 부여, 지도 핀 번호와 동일" },
+          "lat": { "type": "number" },
+          "lng": { "type": "number" },
+          "place_name": { "type": "string", "nullable": true },
+          "observed_at": { "type": "string", "format": "date-time", "description": "목격 시각 — 경로 정렬 기준" },
+          "created_at": { "type": "string", "format": "date-time", "description": "서버 기록 전송 시각" },
+          "similarity": { "type": "number", "nullable": true, "example": 82.1 },
+          "grade": { "$ref": "#/components/schemas/Grade" },
+          "face_found": { "type": "boolean" },
+          "photo_url": { "type": "string" },
+          "status": { "type": "string", "enum": ["visible", "hidden"] },
+          "confirmed": { "type": "boolean" },
+          "gap_minutes": { "type": "integer", "description": "이전 제보와의 간격(분). 60 이상이면 타임라인에 공백 표시" },
+          "bearing": { "type": "string", "nullable": true, "example": "SE", "description": "이전 경로 지점 대비 8방위 (route 제보만)" },
+          "distance_from_prev_km": { "type": "number", "nullable": true }
+        }
+      },
+      "PathPoint": {
+        "type": "object",
+        "properties": {
+          "lat": { "type": "number" },
+          "lng": { "type": "number" },
+          "at": { "type": "string", "format": "date-time" },
+          "index": { "type": "integer", "description": "0 = 최초 실종 지점(origin)" },
+          "origin": { "type": "boolean", "description": "최초 실종 지점에만 true" }
+        }
+      },
+      "User": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "example": "u_a1b2c3d4" },
+          "kakao_id": { "type": "string" },
+          "name": { "type": "string" },
+          "profile_image_url": { "type": "string", "nullable": true },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/auth/kakao": {
+      "post": {
+        "tags": ["auth"],
+        "summary": "카카오 로그인 (가입/로그인 구분 없음)",
+        "description": "프론트가 카카오 SDK로 받은 access_token을 보내면 서버가 카카오에 검증 후 자체 토큰을 발급합니다. `X-Device-Hash` 헤더가 있으면 그 기기의 게스트 제보를 계정에 귀속합니다.",
+        "security": [{ "deviceHash": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "required": ["access_token"], "properties": { "access_token": { "type": "string" } } } } }
+        },
+        "responses": {
+          "200": { "description": "로그인 성공", "content": { "application/json": { "schema": { "type": "object", "properties": { "token": { "type": "string" }, "user": { "$ref": "#/components/schemas/User" }, "claimed_reports": { "type": "integer", "description": "계정에 귀속된 게스트 제보 수" } } } } } },
+          "401": { "description": "카카오 토큰 검증 실패", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "tags": ["auth"],
+        "summary": "내 정보",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "user": { "$ref": "#/components/schemas/User" }, "cases": { "type": "integer" }, "reports": { "type": "integer" } } } } } },
+          "401": { "description": "토큰 없음·만료", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/me/reports": {
+      "get": {
+        "tags": ["me"],
+        "summary": "내 제보 이력",
+        "description": "토큰이 있으면 계정 기준, 없으면 `X-Device-Hash` 기준 (게스트도 자기 제보는 볼 수 있음).",
+        "security": [{ "bearerAuth": [] }, { "deviceHash": [] }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "count": { "type": "integer" }, "items": { "type": "array", "items": { "type": "object", "properties": { "id": { "type": "string" }, "missing_name": { "type": "string" }, "missing_thumbnail": { "type": "string", "nullable": true }, "missing_status": { "type": "string" }, "similarity": { "type": "number", "nullable": true }, "grade": { "$ref": "#/components/schemas/Grade" }, "observed_at": { "type": "string" }, "contributed_to_path": { "type": "boolean", "description": "내 제보가 실제 경로에 포함됐는지" } } } } } } } } }
+        }
+      }
+    },
+    "/missing": {
+      "post": {
+        "tags": ["missing"],
+        "summary": "실종자 등록 (S7) — 사진 다중",
+        "description": "사진 여러 장의 얼굴 벡터를 전부 저장하고 제보 대조 시 최고 유사도를 채택합니다. 모든 사진에서 얼굴 미검출이면 400.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "last_lat", "last_lng", "photos"],
+                "properties": {
+                  "name": { "type": "string", "example": "김하준" },
+                  "age": { "type": "integer", "example": 7 },
+                  "gender": { "type": "string", "enum": ["male", "female", "other"] },
+                  "category": { "type": "string", "enum": ["child", "elderly", "other"], "description": "긴급도 취약도 가중치" },
+                  "description": { "type": "string", "example": "노란 후드티, 검정 백팩. 버스에 관심이 많음" },
+                  "last_lat": { "type": "number", "example": 37.4491 },
+                  "last_lng": { "type": "number", "example": 126.7312 },
+                  "last_address": { "type": "string" },
+                  "missing_at": { "type": "string", "format": "date-time" },
+                  "height_cm": { "type": "integer" },
+                  "weight_kg": { "type": "integer" },
+                  "guardian_phone": { "type": "string", "description": "제보자에게 비공개" },
+                  "photos": { "type": "array", "items": { "type": "string", "format": "binary" }, "description": "첫 장이 대표" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "등록 완료", "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "photos": { "type": "array", "items": { "type": "string" } }, "face_encoding_count": { "type": "integer" }, "notified_devices": { "type": "integer", "description": "푸시 인프라 미구현 — 항상 0" } } } } } },
+          "400": { "description": "필수 누락 또는 전체 얼굴 미검출(FACE_NOT_FOUND)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "get": {
+        "tags": ["missing"],
+        "summary": "실종자 목록 (S1·S2·S5) — 검색·필터·정렬·긴급도",
+        "parameters": [
+          { "name": "q", "in": "query", "schema": { "type": "string" }, "description": "이름·주소 검색" },
+          { "name": "category", "in": "query", "schema": { "type": "string", "enum": ["all", "child", "elderly", "other"], "default": "all" } },
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["active", "resolved", "all"], "default": "active" } },
+          { "name": "sort", "in": "query", "schema": { "type": "string", "enum": ["urgency", "recent", "distance"], "default": "urgency" } },
+          { "name": "lat", "in": "query", "schema": { "type": "number" }, "description": "전달 시 distance_km 포함 + 긴급도 거리 가중치" },
+          { "name": "lng", "in": "query", "schema": { "type": "number" } },
+          { "name": "radius_km", "in": "query", "schema": { "type": "number" }, "description": "지도 뷰포트 필터" },
+          { "name": "cursor", "in": "query", "schema": { "type": "integer", "default": 0 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20 } }
+        ],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "count": { "type": "integer" }, "next_cursor": { "type": "string", "nullable": true }, "items": { "type": "array", "items": { "$ref": "#/components/schemas/MissingSummary" } } } } } } }
+        }
+      }
+    },
+    "/missing/{missing_id}": {
+      "get": {
+        "tags": ["missing"],
+        "summary": "실종자 상세 (S3)",
+        "parameters": [{ "name": "missing_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "allOf": [{ "$ref": "#/components/schemas/MissingSummary" }, { "type": "object", "properties": { "photos": { "type": "array", "items": { "type": "string" } }, "height_cm": { "type": "integer", "nullable": true }, "weight_kg": { "type": "integer", "nullable": true }, "match_count": { "type": "integer" }, "is_guardian": { "type": "boolean" }, "boost_available": { "type": "boolean" } } }] } } } },
+          "404": { "description": "없음", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/reports/analyze": {
+      "post": {
+        "tags": ["reports"],
+        "summary": "★ 사진 분석 (S4-1) — 제보 전 단계",
+        "description": "임시 사진은 uploads/tmp/에 저장, TTL 10분. 얼굴 미검출은 에러가 아니라 grade=no_face로 응답하며 제보 가능합니다.",
+        "requestBody": {
+          "required": true,
+          "content": { "multipart/form-data": { "schema": { "type": "object", "required": ["missing_id", "photo"], "properties": { "missing_id": { "type": "string" }, "photo": { "type": "string", "format": "binary" } } } } }
+        },
+        "responses": {
+          "200": { "description": "분석 결과", "content": { "application/json": { "schema": { "type": "object", "properties": { "analysis_id": { "type": "string", "example": "an_7x9k2m" }, "similarity": { "type": "number", "nullable": true, "example": 63.4 }, "grade": { "$ref": "#/components/schemas/Grade" }, "face_found": { "type": "boolean" }, "photo_url": { "type": "string" }, "matched_photo_url": { "type": "string", "nullable": true, "description": "최고 유사도를 낸 등록 사진 — S4-1 대조 이미지 좌측" }, "expires_at": { "type": "string", "format": "date-time" } } } } } },
+          "404": { "description": "missing_id 없음", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/reports": {
+      "post": {
+        "tags": ["reports"],
+        "summary": "★ 제보 확정 (S4)",
+        "description": "analyze에서 받은 analysis_id로 확정 — 사진 재업로드 없음. 게스트 제한: 사건 1건당 X-Device-Hash 기준 10분 내 3회.",
+        "security": [{ "deviceHash": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "required": ["analysis_id", "lat", "lng"], "properties": { "analysis_id": { "type": "string" }, "lat": { "type": "number", "example": 37.4622 }, "lng": { "type": "number", "example": 126.7401 }, "place_name": { "type": "string", "example": "만수주공 앞 버스정류장" }, "observed_at": { "type": "string", "format": "date-time", "description": "목격 시각(EXIF 우선). 미전송 시 현재 시각" } } } } }
+        },
+        "responses": {
+          "201": { "description": "제보 저장", "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string" }, "missing_id": { "type": "string" }, "similarity": { "type": "number", "nullable": true }, "grade": { "$ref": "#/components/schemas/Grade" }, "route_index": { "type": "integer", "nullable": true }, "photo_url": { "type": "string" }, "observed_at": { "type": "string" }, "created_at": { "type": "string" }, "guardian_notified": { "type": "boolean" } } } } } },
+          "410": { "description": "분석 결과 만료(ANALYSIS_EXPIRED) — 다시 분석 필요", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "429": { "description": "게스트 제한 초과(RATE_LIMITED)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/missing/{missing_id}/reports": {
+      "get": {
+        "tags": ["reports"],
+        "summary": "★ 제보 목록 / 이동 경로 (S3·S5)",
+        "description": "`reports`는 최신순(타임라인용), `path`는 시간순 + 최초 실종 지점 포함(폴리라인용) — 방향이 반대인 것은 의도된 것입니다.",
+        "parameters": [
+          { "name": "missing_id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "min_similarity", "in": "query", "schema": { "type": "number", "default": 0 }, "description": "필터 토글용 (UI 기본 60)" },
+          { "name": "include_low", "in": "query", "schema": { "type": "boolean", "default": true }, "description": "false면 low·no_face 제외" },
+          { "name": "until", "in": "query", "schema": { "type": "string", "format": "date-time" }, "description": "시간 슬라이더 — 이 시각까지의 제보만" }
+        ],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "missing_id": { "type": "string" }, "count": { "type": "integer" }, "hidden_count": { "type": "integer", "description": "필터로 숨겨진 건수" }, "origin": { "type": "object", "properties": { "lat": { "type": "number" }, "lng": { "type": "number" }, "address": { "type": "string", "nullable": true }, "at": { "type": "string" } } }, "reports": { "type": "array", "items": { "$ref": "#/components/schemas/Report" } }, "path": { "type": "array", "items": { "$ref": "#/components/schemas/PathPoint" } }, "time_range": { "type": "object", "properties": { "from": { "type": "string" }, "to": { "type": "string" }, "ticks": { "type": "array", "items": { "type": "string" }, "description": "시간 슬라이더 눈금 위치" } } } } } } } },
+          "404": { "description": "없음", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/uploads/{filename}": {
+      "get": {
+        "tags": ["files"],
+        "summary": "사진 서빙",
+        "description": "썸네일은 `{이름}_thumb.jpg` 규칙. 목록에서는 썸네일을 사용하세요.",
+        "parameters": [{ "name": "filename", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "이미지 파일" }, "404": { "description": "없음" } }
+      }
+    },
+    "/report": {
+      "post": {
+        "tags": ["legacy"],
+        "summary": "(deprecated) 구 제보 API — 업로드+분석+저장 한 번에",
+        "deprecated": true,
+        "requestBody": { "content": { "multipart/form-data": { "schema": { "type": "object", "required": ["missing_id", "lat", "lng", "photo"], "properties": { "missing_id": { "type": "string" }, "lat": { "type": "number" }, "lng": { "type": "number" }, "photo": { "type": "string", "format": "binary" } } } } } },
+        "responses": { "201": { "description": "구 응답 형태 { message, report_id, similarity, face_found, is_match, alert }" } }
+      }
+    },
+    "/reports/{missing_id}": {
+      "get": {
+        "tags": ["legacy"],
+        "summary": "(deprecated) 구 제보 목록 API",
+        "deprecated": true,
+        "parameters": [
+          { "name": "missing_id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "only_match", "in": "query", "schema": { "type": "string", "enum": ["1"] } }
+        ],
+        "responses": { "200": { "description": "구 응답 형태 { missing_id, count, reports, path }" } }
+      }
+    }
+  }
+}
