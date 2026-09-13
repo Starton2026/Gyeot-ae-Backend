@@ -1,15 +1,20 @@
 """얼굴대조 AI 로직 (face_recognition / dlib 기반).
 
-등급 체계 (2026-09-12 디자인 확정본 기준, high는 실측값에 맞춰 60으로 조정):
-- high    : similarity >= 60   → route_index 부여
-- medium  : 40 <= s < 60       → route_index 부여
+등급 체계 (API 명세서 7절 · 기능정의서 5.2):
+- high    : similarity >= 70   → route_index 부여
+- medium  : 40 <= s < 70       → route_index 부여
 - low     : s < 40             → 저장하되 경로 제외
 - no_face : 얼굴 미검출        → 저장하되 경로 제외 (에러 아님)
 """
 import face_recognition
 import numpy as np
 
-SIMILARITY_HIGH = 60   # high 등급 기준 (실측: 동일 인물 정면 사진 65.4%)
+# high 등급 기준. 명세서가 정한 값이다.
+#
+# 실측에서는 동일 인물 정면 사진이 65.4%로 나와 이 선에 못 미친 적이 있다.
+# 그래도 명세를 따른다 — 앱과 서버가 같은 기준을 써야 화면의 "높음"과 서버의
+# 판단이 어긋나지 않는다. 기준을 바꿔야 한다면 명세부터 고친다.
+SIMILARITY_HIGH = 70
 SIMILARITY_ROUTE = 40  # 경로(route_index) 포함 기준
 
 
