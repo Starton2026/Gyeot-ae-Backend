@@ -95,6 +95,7 @@ def recompute_route_indexes(db, missing_id):
         r for r in database.case_reports(db, missing_id)
         if r["status"] == "visible" and r["face_found"]
         and (r["similarity"] or 0) >= face_service.SIMILARITY_ROUTE
+        and r.get("lat") is not None and r.get("lng") is not None  # 좌표 없으면 경로 제외
     ]
     reports.sort(key=lambda r: r["observed_at"])
     indexed = {r["id"]: i + 1 for i, r in enumerate(reports)}
@@ -475,10 +476,14 @@ def create_report():
     analysis_id = data.get("analysis_id")
     if not analysis_id:
         return api_error("VALIDATION_ERROR", "analysis_id는 필수입니다.", 400, "analysis_id")
-    try:
-        lat, lng = float(data["lat"]), float(data["lng"])
-    except (KeyError, TypeError, ValueError):
-        return api_error("VALIDATION_ERROR", "lat/lng는 숫자로 필수입니다.", 400, "lat")
+    # 위치 권한 거부·GPS 미획득은 정상 경로 — 좌표 없이도 제보를 받는다.
+    # 좌표 없는 제보는 경로(route_index)에 못 들어가고 사진·시간만 남는다.
+    lat, lng = data.get("lat"), data.get("lng")
+    if lat is not None or lng is not None:
+        try:
+            lat, lng = float(lat), float(lng)
+        except (TypeError, ValueError):
+            return api_error("VALIDATION_ERROR", "lat/lng는 숫자여야 합니다.", 400, "lat")
 
     db = database.load_db()
     purge_expired_analyses(db)
@@ -750,7 +755,8 @@ def legacy_reports(missing_id):
         "is_match": r["face_found"] and (r["similarity"] or 0) >= face_service.SIMILARITY_HIGH,
         "reported_at": r["observed_at"], "timestamp": r["timestamp"],
     } for r in reports]
-    path = [{"lat": r["lat"], "lng": r["lng"], "time": r["observed_at"]} for r in reports]
+    path = [{"lat": r["lat"], "lng": r["lng"], "time": r["observed_at"]}
+            for r in reports if r["lat"] is not None]
     return jsonify({"missing_id": missing_id, "count": len(old_shape),
                     "reports": old_shape, "path": path})
 
