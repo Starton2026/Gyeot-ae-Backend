@@ -5,7 +5,7 @@ import uuid
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "db.json")
 
-_DEFAULT = {"missing": [], "reports": [], "analyses": [], "users": []}
+_DEFAULT = {"missing": [], "reports": [], "analyses": [], "users": [], "devices": []}
 
 
 def load_db():
@@ -49,6 +49,13 @@ def find_user(db, user_id):
     for u in db["users"]:
         if u["id"] == user_id:
             return u
+    return None
+
+
+def find_device(db, device_hash):
+    for d in db["devices"]:
+        if d["device_hash"] == device_hash:
+            return d
     return None
 
 

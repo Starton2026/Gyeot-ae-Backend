@@ -18,6 +18,7 @@ import auth_service
 import db as database
 import face_service
 import firebase_service
+import push_service
 from utils import bearing_8, elapsed_minutes, haversine_km, now_kst, parse_dt
 
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
@@ -247,6 +248,55 @@ def auth_me():
     })
 
 
+# ── 4) 기기 등록 — 온보딩·S8 ────────────────────────────
+@app.route("/devices", methods=["POST"])
+def register_device():
+    """푸시 토큰과 알림 설정을 등록한다. **로그인 불필요**(명세서 4).
+
+    알림을 받아야 할 사람 대부분이 로그인하지 않은 주변 시민이라(설계 결정
+    1번) 기기 해시로 식별한다. 로그인한 상태로 올리면 회원번호도 함께
+    적어 둔다 — 발견 완료 알림은 제보자를 회원번호로도 찾기 때문이다.
+
+    같은 기기가 다시 올리면 덮어쓴다. 앱은 토큰이 갱신될 때마다 부른다.
+
+    **lat/lng는 명세서 요청 예시에 없는 값이다.** 반경 안 기기에만 보내려면
+    기기가 어디에 있는지 알아야 하는데 명세에 그 자리가 없어 선택 항목으로
+    받는다. 안 주면 그 기기는 반경 알림 대상에서 빠진다.
+    """
+    data = request.get_json(silent=True) or {}
+    device_hash = data.get("device_hash") or request.headers.get("X-Device-Hash")
+    if not device_hash:
+        return api_error("VALIDATION_ERROR", "device_hash가 필요합니다.", 400, "device_hash")
+
+    push_token = data.get("push_token")
+    if not push_token:
+        return api_error("VALIDATION_ERROR", "push_token이 필요합니다.", 400, "push_token")
+
+    categories = data.get("categories")
+    if categories is not None and not isinstance(categories, list):
+        return api_error("VALIDATION_ERROR", "categories는 배열이어야 합니다.", 400, "categories")
+
+    db = database.load_db()
+    device = database.find_device(db, device_hash)
+    if device is None:
+        device = {"device_hash": device_hash, "created_at": now_kst().isoformat()}
+        db["devices"].append(device)
+
+    device.update({
+        "push_token": push_token,
+        "radius_km": data.get("radius_km") or push_service.DEFAULT_RADIUS_KM,
+        "categories": categories,
+        "quiet_hours": data.get("quiet_hours"),
+        "lat": data.get("lat"),
+        "lng": data.get("lng"),
+        "user_id": auth_service.current_user_id(request),
+        "updated_at": now_kst().isoformat(),
+    })
+    database.save_db(db)
+
+    return jsonify({"ok": True})
+
+
 # ── 18) 내 제보 이력 — S8 ───────────────────────────────
 @app.route("/me/reports", methods=["GET"])
 def my_reports():
@@ -350,8 +400,11 @@ def resolve_missing(missing_id):
         if r["status"] == "visible"
     }
 
-    # TODO(알림): 푸시 인프라가 붙으면 이 사람들에게 결과를 보낸다.
     # 명세서가 "재참여 동기를 만드는 유일한 지점"이라고 적은 자리다.
+    # notified_reporters는 명세대로 **제보한 사람 수**를 그대로 둔다. 그중
+    # 푸시 토큰을 올린 기기에만 실제로 알림이 간다.
+    push_service.notify_resolved(db, m, reporters)
+
     return jsonify({
         "status": "resolved",
         "resolved_at": found_at,
@@ -474,12 +527,19 @@ def register_missing():
     database.save_db(db)
     firebase_service.push_missing(missing)  # 관제 화면 실시간 반영
 
+    # 반경 안 시민에게 알린다. 실제로 보낸 기기 수를 그대로 돌려준다 —
+    # 푸시 키가 없으면 0이다. 보내지도 않고 대상 수를 적으면 보호자가
+    # "1284명이 봤다"고 읽는다.
+    notified = push_service.notify_new_case(
+        db, missing, exclude_device_hash=request.headers.get("X-Device-Hash")
+    )
+
     return jsonify({
         "id": missing["id"],
         "name": missing["name"],
         "photos": [f"/uploads/{p}" for p in saved],
         "face_encoding_count": len(encodings),
-        "notified_devices": 0,  # 푸시 인프라는 2순위 — 스텁
+        "notified_devices": notified,
     }), 201
 
 

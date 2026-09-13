@@ -144,6 +144,18 @@
         }
       }
     },
+    "/devices": {
+      "post": {
+        "tags": ["me"],
+        "summary": "기기 등록 (온보딩·S8)",
+        "description": "푸시 토큰과 알림 설정을 등록합니다. 로그인 불필요 — 알림 대상 대부분이 로그인하지 않은 주변 시민이라 기기 해시로 식별합니다.\n\n\n\n같은 기기가 다시 올리면 덮어씁니다. 토큰이 갱신될 때마다 부르세요.\n\n\n\n`lat`/`lng`는 명세서 요청 예시에 없는 선택 항목입니다. 반경 안 기기에만 보내려면 기기가 어디 있는지 알아야 하는데 명세에 자리가 없어 추가했습니다. 안 주면 그 기기는 반경 알림에서 빠집니다.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["push_token"], "properties": { "device_hash": { "type": "string", "description": "없으면 X-Device-Hash 헤더를 씁니다" }, "push_token": { "type": "string", "example": "fcm:..." }, "radius_km": { "type": "number", "default": 5, "description": "1 / 3 / 5 / 10" }, "categories": { "type": "array", "items": { "type": "string", "enum": ["child", "elderly", "other"] }, "description": "비우면 전부 받습니다" }, "quiet_hours": { "type": "object", "properties": { "from": { "type": "string", "example": "23:00" }, "to": { "type": "string", "example": "07:00" } } }, "lat": { "type": "number" }, "lng": { "type": "number" } } } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "ok": { "type": "boolean" } } } } } },
+          "400": { "description": "device_hash 또는 push_token 없음" }
+        }
+      }
+    },
     "/me/missing": {
       "get": {
         "tags": ["me"],
@@ -207,7 +219,7 @@
           }
         },
         "responses": {
-          "201": { "description": "등록 완료", "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "photos": { "type": "array", "items": { "type": "string" } }, "face_encoding_count": { "type": "integer" }, "notified_devices": { "type": "integer", "description": "푸시 인프라 미구현 — 항상 0" } } } } } },
+          "201": { "description": "등록 완료", "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "photos": { "type": "array", "items": { "type": "string" } }, "face_encoding_count": { "type": "integer" }, "notified_devices": { "type": "integer", "description": "반경·구분·방해 금지 시간을 지켜 실제로 푸시를 보낸 기기 수. serviceAccountKey.json이 없으면 0" } } } } } },
           "400": { "description": "필수 누락(VALIDATION_ERROR, field에 항목명) 또는 전체 얼굴 미검출(FACE_NOT_FOUND)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "401": { "description": "토큰 없음·만료" }
         }
