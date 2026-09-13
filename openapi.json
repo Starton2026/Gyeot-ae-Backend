@@ -38,7 +38,7 @@
       "Grade": {
         "type": "string",
         "enum": ["high", "medium", "low", "no_face"],
-        "description": "high: 60%↑ / medium: 40~60% / low: 40%↓ / no_face: 얼굴 미검출. low·no_face는 저장되지만 route_index 없음"
+        "description": "high: 70%↑ / medium: 40~70% / low: 40%↓ / no_face: 얼굴 미검출. low·no_face는 저장되지만 route_index 없음"
       },
       "MissingSummary": {
         "type": "object",
