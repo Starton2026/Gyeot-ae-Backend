@@ -318,6 +318,8 @@ def my_reports():
         m = database.find_missing(db, r["missing_id"])
         items.append({
             "id": r["id"],
+            # MY에서 누르면 그 사건 상세로 간다. 이름만으로는 찾아갈 수 없다.
+            "missing_id": r["missing_id"],
             "missing_name": m["name"] if m else None,
             # 이름만으로는 누구인지 잘 안 떠오른다. MY 화면이 "김하준 · 7세"로
             # 적을 수 있게 나이와 성별을 함께 준다.
