@@ -8,6 +8,7 @@
 """
 import face_recognition
 import numpy as np
+from PIL import Image, ImageOps
 
 # high 등급 기준. 명세서가 정한 값이다.
 #
@@ -18,13 +19,47 @@ SIMILARITY_HIGH = 70
 SIMILARITY_ROUTE = 40  # 경로(route_index) 포함 기준
 
 
+# 검출 전에 긴 변을 이만큼으로 줄인다. 폰 원본(1600~3000px)을 그대로 넣으면 HOG
+# 검출이 한 장에 5~15초 걸린다. 이 크기에서도 한 사람 얼굴은 검출 하한(약 80px)을
+# 넉넉히 넘는다.
+_DETECT_MAX_SIDE = 1024
+
+
+def _load_upright(path):
+    """사진을 **EXIF 회전값대로 세워서** 줄여 읽는다.
+
+    폰 카메라는 픽셀을 가로로 저장하고 "90도 돌려서 보라"는 값만 붙인다.
+    `face_recognition.load_image_file`은 그 값을 무시해서, 세로로 찍은 사진의
+    얼굴이 옆으로 누운 채 검출기에 들어가 거의 못 찾았다(실기기 2026-09-14,
+    회전값 6인 사진이 전부 no_face).
+    """
+    with Image.open(path) as image:
+        upright = ImageOps.exif_transpose(image).convert("RGB")
+        upright.thumbnail((_DETECT_MAX_SIDE, _DETECT_MAX_SIDE))
+        return np.array(upright)
+
+
 def get_face_encoding(path):
-    """사진 경로 → 128차원 얼굴 인코딩 벡터. 얼굴이 없으면 None."""
-    image = face_recognition.load_image_file(path)
-    encodings = face_recognition.face_encodings(image)
-    if not encodings:
+    """사진 경로 → 128차원 얼굴 인코딩 벡터. 얼굴이 없으면 None.
+
+    여러 명이 찍혔으면 **가장 큰 얼굴**을 쓴다 — 첫 번째 얼굴은 뒤에 지나가던
+    사람일 수 있다.
+
+    사진을 90도씩 돌려 다시 찾는 것은 하지 않는다. 실측에서 느려지기만 하고,
+    돌려서 찾은 얼굴은 어느 사건과도 30% 안팎이라 오검출이었다.
+    """
+    # 가짜 모듈(hackerton/fake-face)은 사진 내용을 해시할 뿐 검출기가 없다.
+    if not hasattr(face_recognition, "face_locations"):
+        encodings = face_recognition.face_encodings(face_recognition.load_image_file(path))
+        return encodings[0] if encodings else None
+
+    image = _load_upright(path)
+    locations = face_recognition.face_locations(image)
+    if not locations:
         return None
-    return encodings[0]  # 여러 명이면 첫 번째 얼굴 사용
+    largest = max(locations, key=lambda box: (box[2] - box[0]) * (box[1] - box[3]))
+    encodings = face_recognition.face_encodings(image, known_face_locations=[largest])
+    return encodings[0] if encodings else None
 
 
 def best_similarity(known_encodings, path):
