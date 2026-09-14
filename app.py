@@ -184,7 +184,8 @@ def report_public(r):
         "similarity": r["similarity"],
         "grade": r["grade"],
         "face_found": r["face_found"],
-        "photo_url": f"/uploads/{r['photo']}",
+        # 시드 제보는 사진이 없을 수 있다. "/uploads/None"을 주면 앱이 404를 받는다.
+        "photo_url": f"/uploads/{r['photo']}" if r.get("photo") else None,
         "status": r["status"],
         "confirmed": r.get("confirmed", False),
     }

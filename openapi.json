@@ -75,7 +75,7 @@
           "similarity": { "type": "number", "nullable": true, "example": 82.1 },
           "grade": { "$ref": "#/components/schemas/Grade" },
           "face_found": { "type": "boolean" },
-          "photo_url": { "type": "string" },
+          "photo_url": { "type": "string", "nullable": true, "description": "사진 없이 만든 시드 제보는 null" },
           "status": { "type": "string", "enum": ["visible", "hidden"] },
           "confirmed": { "type": "boolean" },
           "gap_minutes": { "type": "integer", "description": "이전 제보와의 간격(분). 60 이상이면 타임라인에 공백 표시" },

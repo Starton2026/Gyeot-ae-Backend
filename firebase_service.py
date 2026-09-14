@@ -64,7 +64,7 @@ def push_report(report, missing_name):
     try:
         doc = dict(report)
         doc["missing_name"] = missing_name
-        doc["photo_url"] = photo_url(report["photo"])
+        doc["photo_url"] = photo_url(report["photo"]) if report.get("photo") else None
         _db.collection("reports").document(report["id"]).set(doc)
     except Exception as e:
         print(f"[firebase] report 푸시 실패: {e}")

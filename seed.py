@@ -13,6 +13,7 @@ from datetime import timedelta
 import db as database
 import face_service
 import firebase_service
+from app import recompute_route_indexes
 from utils import now_kst
 
 # 서울 시청 → 남산 방향으로 이동하는 경로 (lat, lng, 유사도, 몇 분 전, 위치명)
@@ -59,18 +60,16 @@ def seed_missing(db):
 def seed_reports(db, missing):
     """실종자에 대해 시간순 이동 경로를 그리는 가짜 제보들 생성."""
     now = now_kst()
+    # 데모용: 실종자 사진을 제보 사진으로 재사용한다. 가짜 실종자는 사진이
+    # 없어서 제보도 사진 없이 만든다(앱이 자리표시자를 그린다).
+    photo = missing["photos"][0] if missing.get("photos") else None
     reports = []
-    route_index = 0
     for lat, lng, similarity, minutes_ago, place in FAKE_PATH:
         t = now - timedelta(minutes=minutes_ago)
-        grade = face_service.grade_of(similarity, True)
-        on_route = similarity >= face_service.SIMILARITY_ROUTE
-        if on_route:
-            route_index += 1
         reports.append({
             "id": database.new_id("r_"),
             "missing_id": missing["id"],
-            "photo": missing["photos"][0],  # 데모용: 실종자 사진 재사용
+            "photo": photo,
             "lat": lat,
             "lng": lng,
             "place_name": place,
@@ -79,14 +78,20 @@ def seed_reports(db, missing):
             "timestamp": t.timestamp(),
             "similarity": similarity,
             "face_found": True,
-            "grade": grade,
-            "route_index": route_index if on_route else None,
+            "grade": face_service.grade_of(similarity, True),
+            "route_index": None,  # 아래 재계산에서 부여
             "status": "visible",
             "confirmed": False,
             "device_hash": "seed",
         })
     db["reports"].extend(reports)
-    firebase_service.push_case_reports(reports, missing["name"])
+
+    # 번호는 서버와 같은 규칙으로 사건 전체를 다시 매긴다. 여기서 1부터 따로
+    # 세면, 앱에서 이미 제보가 들어온 사건에 번호가 겹쳐 경로가 꼬인다.
+    changed = recompute_route_indexes(db, missing["id"])
+    to_push = {r["id"]: r for r in changed}
+    to_push.update({r["id"]: r for r in reports})
+    firebase_service.push_case_reports(to_push.values(), missing["name"])
     print(f"가짜 제보 {len(reports)}건 생성 완료 (missing_id={missing['id']})")
 
 
