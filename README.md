@@ -384,6 +384,7 @@ Gyeot-ae-Backend/
 ├── db.py                   # JSON 파일 DB 읽기/쓰기 (원자적 교체), 조회 헬퍼
 ├── utils.py                # KST 시각, 경과 분, 하버사인 거리, 8방위
 ├── seed.py                 # 데모용 시간순 가짜 제보 5건 생성
+├── demo_seed.py            # 시연 영상용 사건 1건(진짜 사진 · 정해 둔 경로·유사도), 다시 돌리면 교체
 ├── openapi.json            # Swagger UI(/docs)용 API 명세
 ├── requirements.txt
 ├── uploads/                # 사진·썸네일, tmp/ 분석 임시 사진 (git 제외)
@@ -441,6 +442,7 @@ pip install --no-deps face_recognition
 |---|---|---|
 | **푸시 알림 · Firestore** | Firebase 콘솔 → 프로젝트 설정 → 서비스 계정 → 새 비공개 키 → 루트에 `serviceAccountKey.json`으로 저장. 실행 로그 첫 줄에 `[firebase] Firestore 연동 활성화` 확인 | 알림·Firestore 없이 JSON DB만으로 정상 동작 (`notified_devices: 0`) |
 | **외부 공개** | `ngrok http 5001` → 발급된 `https://...` 주소를 앱 `env/dev.json`의 `API_BASE_URL`에 | 같은 Wi-Fi에서 PC IP로 접속 |
+| **시연 영상 데이터** | `demo/register/`(등록 사진)·`demo/reports/`(제보 사진)에 사진을 넣고 `python demo_seed.py` → 인하공전 근처 동선으로 제보 6건(확인 필요·얼굴 미검출·70분 공백 포함)을 가진 사건을 만든다. 등록 사진의 얼굴 벡터는 진짜로 뽑아 **라이브 제보는 실제 분석**을 탄다. 다시 돌리면 교체, `--remove`로 삭제, `--guardian <닉네임>`·`--minutes-ago <분>` | — |
 | **시드 데이터** | `python seed.py` → 진행 중 사건이 없으면 사진 없는 가짜 실종자를 만들고, 첫 번째 진행 중 사건에 시간순 제보 5건(서울 시청 → 남산 좌표, 유사도 고정값)을 추가. 경로 번호는 사건의 기존 제보까지 포함해 다시 매김 | — |
 
 ### 환경변수
