@@ -109,7 +109,7 @@
 | 요소 | 가중치 |
 |---|---|
 | 골든타임 (실종 후 경과) | 3시간 미만 ×3.0 · 12시간 미만 ×2.0 · 48시간 미만 ×1.5 · 이후 ×1.0 |
-| 취약도 | 아동·어르신 ×1.5 · 그 외 ×1.0 |
+| 취약도 | 아동·어르신 ×1.5 · 성인(`other`) ×1.0 |
 | 거리 (요청자 위치 기준, 하버사인) | 3km 이내 ×2.0 · 10km 이내 ×1.3 · 그 외 ×1.0 |
 | 제보 공백 | 마지막 제보(없으면 실종 시각) 후 1시간 경과 ×1.3 |
 
@@ -136,6 +136,14 @@
 | **해결하는 문제** | 허위 실종 등록은 막아야 하지만, **제보는 로그인 없이** 열려 있어야 한다 |
 | **사용 방법** | 로그인: `POST /auth/kakao` → 이후 `Authorization: Bearer <token>`. 게스트: 모든 요청에 `X-Device-Hash` |
 | **기술 구현** | 앱이 받은 카카오 `access_token`을 서버가 **카카오 API(`/v2/user/me`)에 직접 물어 검증**하고, 처음 보는 사용자면 그 자리에서 계정을 만든다 (서버에는 카카오 키가 필요 없음). 자체 토큰은 `itsdangerous`로 서명(7일). 로그인할 때 같은 기기의 **게스트 제보를 계정으로 귀속**한다. 게스트 남용은 **사건 1건당 기기 기준 10분 내 3회**로 제한(`429 RATE_LIMITED`), 발견 완료는 **등록한 보호자만**(`403 FORBIDDEN`) |
+
+### ⑥ 보호자 사건 관리 — 사진을 더하면 경로가 다시 그려진다
+
+| | |
+|---|---|
+| **해결하는 문제** | 실종 뒤에야 떠오르는 인상착의, 나중에 찾은 다른 각도의 사진, 허위·중복 제보. 등록한 순간의 정보만으로는 수색이 끝까지 가지 않는다 |
+| **사용 방법** | 상세 응답의 `is_guardian`이 true면 앱이 보호자 메뉴를 연다. 정보 수정 `PATCH /missing/{id}`, 사진 추가 `POST /missing/{id}/photos`, 제보 관리 `PATCH /reports/{id}`, 발견 완료 `POST /missing/{id}/resolve` |
+| **기술 구현** | **사진을 더하면 새 얼굴 벡터를 합친 뒤 기존 제보의 유사도를 전부 다시 계산하고 경로 번호를 다시 붙인다.** 뒷모습·옆모습이라 낮게 나왔던 진짜 제보가 경로에 들어올 수 있다(얼굴을 못 찾은 제보는 결과가 같아 건너뜀). 정보 수정은 인상착의·위치·키·몸무게만 받고, **이름·나이·성별·구분·실종 일시는 400으로 막는다** — 경과 시간과 긴급도를 조작할 수 없게. 제보는 **지우지 않고 숨긴다**: 숨긴 제보는 경로와 시민 응답에서 빠지고 보호자에게만 `status=hidden`으로 남아 되돌릴 수 있다. 긴급도 올리기(부스트)는 사용자 조작으로 순위를 올리지 않는다는 원칙에 따라 만들지 않았다 |
 
 ---
 
@@ -300,7 +308,7 @@ flowchart LR
 
 | 컬렉션 | 주요 필드 |
 |---|---|
-| `missing` | `id`, `guardian_id`, `name`, `age`, `gender`, `category`(child/elderly/other), `description`, `height_cm`, `weight_kg`, `last_lat`, `last_lng`, `last_address`, `missing_at`, `photos[]`, `encoded_photos[]`, `encodings[][]`, `status`(active/resolved), `resolved_at`, `created_at` |
+| `missing` | `id`, `guardian_id`, `name`, `age`, `gender`, `category`(child/elderly/other — 앱은 나이로 골라 17세 이하 아동·65세 이상 어르신·그 사이 성인), `description`, `height_cm`, `weight_kg`, `last_lat`, `last_lng`, `last_address`, `missing_at`, `photos[]`, `encoded_photos[]`, `encodings[][]`, `status`(active/resolved), `resolved_at`, `created_at` |
 | `reports` | `id`, `missing_id`, `photo`, `lat`, `lng`, `place_name`, **`observed_at`**, `created_at`, `similarity`, `face_found`, `grade`, **`route_index`**, `status`, `device_hash`, `reporter_id` |
 | `analyses` | `id`, `missing_id`, `photo`(tmp), `similarity`, `face_found`, `grade`, `matched_photo`, **`expires_at`** |
 | `users` | `id`, `kakao_id`, `name`, `profile_image_url`, `created_at` |
@@ -323,12 +331,15 @@ flowchart LR
 | `POST` | `/devices` | — | FCM 토큰 · 반경 · 관심 구분 · 방해 금지 시간 · 기기 좌표 등록 |
 | `POST` | `/missing` | 필수 | 실종자 등록 (multipart, 사진 다중) → `201 { id, photos, face_encoding_count, notified_devices }` |
 | `GET` | `/missing` | — | 목록: `q` · `category` · `status` · `sort` · `lat`/`lng` · `radius_km` · `cursor` · `limit` |
-| `GET` | `/missing/{id}` | — | 상세 (`report_count`, `match_count`, `elapsed_minutes` 포함) |
+| `GET` | `/missing/{id}` | — | 상세 (`report_count`, `match_count`, `elapsed_minutes`, 토큰 기준 `is_guardian` 포함) |
 | `POST` | `/missing/{id}/resolve` | 보호자 | 발견 완료 + 제보자 알림 → `{ status, resolved_at, notified_reporters }` |
+| `PATCH` | `/missing/{id}` | 보호자 | 정보 수정 (인상착의·위치·주소·키·몸무게만) → 바뀐 상세 |
+| `POST` | `/missing/{id}/photos` | 보호자 | 사진 추가 + 기존 제보 재분석·경로 번호 재부여 → `{ photos, face_encoding_count, reanalyzed_reports }` |
+| `PATCH` | `/reports/{id}` | 보호자 | 제보 숨기기·되돌리기(`status`), 확인함(`confirmed`) |
 | `POST` | `/reports/analyze` | — | **1단계** 사진 분석 → `{ analysis_id, similarity, grade, face_found, photo_url, matched_photo_url, expires_at }` |
 | `POST` | `/reports` | — | **2단계** 제보 확정 (JSON) → `201 { id, route_index, similarity, grade, guardian_notified, ... }` |
-| `GET` | `/missing/{id}/reports` | — | 타임라인 · 경로 · 시간 범위 (`min_similarity`, `include_low`, `until`) |
-| `GET` | `/me/reports` | 토큰 또는 기기 | 내 제보 이력 (경로 기여 여부 포함) |
+| `GET` | `/missing/{id}/reports` | — | 타임라인 · 경로 · 시간 범위 (`min_similarity`, `include_low`, `until`). 보호자 토큰이면 숨긴 제보도 함께 |
+| `GET` | `/me/reports` | 토큰 또는 기기 | 내 제보 이력 (사건 id · 경로 기여 여부 포함) |
 | `GET` | `/me/missing` | 필수 | 내가 등록한 실종자 (진행 중 먼저) |
 | `GET` | `/uploads/{filename}` | — | 사진 서빙 |
 | `GET` | `/docs` · `/openapi.json` | — | Swagger UI · OpenAPI 명세 |
@@ -350,7 +361,7 @@ flowchart LR
 | `VALIDATION_ERROR` | 400 | 필수값 누락·형식 오류 (`field`로 어느 항목인지 알려줌) |
 | `FACE_NOT_FOUND` | 400 | 실종자 등록 사진 전부에서 얼굴 미검출 (제보에는 해당 없음) |
 | `UNAUTHORIZED` | 401 | 토큰 없음·만료, 카카오 토큰 검증 실패 |
-| `FORBIDDEN` | 403 | 보호자가 아닌 사용자의 발견 완료 |
+| `FORBIDDEN` | 403 | 보호자가 아닌 사용자의 발견 완료·정보 수정·사진 추가·제보 관리 |
 | `NOT_FOUND` | 404 | 없는 사건 |
 | `ANALYSIS_EXPIRED` | 410 | 10분이 지난 분석으로 제보 확정 |
 | `RATE_LIMITED` | 429 | 같은 기기가 한 사건에 10분 내 3회 초과 (`retry_after` 포함) |
@@ -557,7 +568,7 @@ curl "http://localhost:5001/missing/<MISSING_ID>/reports"
 | **사진 저장** | 서버 로컬 `uploads/` | 오브젝트 스토리지 + CDN, 서명 URL로 접근 제어 |
 | **배포** | 로컬 Flask 개발 서버 + ngrok | 운영용 WSGI 서버 · 클라우드 배포 · HTTPS, `SECRET_KEY` 등 비밀값 관리 |
 | **AI 처리** | 요청 스레드에서 동기 추론 | 분석 작업 큐로 분리해 트래픽 증가 시 응답 지연 방지, 실측 데이터로 등급 임계값(70/40) 검증 |
-| **보호자 사건 관리** | 등록 · 발견 완료 | 사건 정보 수정, **사진 추가 시 기존 제보 유사도·경로 번호 재계산**, 제보 숨기기·확인 체크·허위 제보 신고 |
+| **제보 신고** | 보호자가 숨기기로 거른다 | 시민의 허위·장난 제보 신고(`POST /reports/{id}/flag`), 여러 번 신고된 제보 자동 숨김 후 운영 검토 |
 | **개인정보 보호** | 보호자 연락처 미수집, 벡터는 Firestore 미전송 | **사건 종료 후 30일 내 제보 사진 자동 삭제** 배치, 제보 사진 접근 권한 세분화 |
 | **실시간 반영** | Firestore에 사건·제보 미러링 (앱은 아직 REST 조회) | 앱의 Firestore 구독과 연결해 제보 접수 즉시 보호자 화면 갱신 |
 
