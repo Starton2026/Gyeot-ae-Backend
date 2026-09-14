@@ -26,7 +26,9 @@ TMP_DIR = os.path.join(UPLOAD_DIR, "tmp")  # 분석 임시 사진 (TTL 10분)
 os.makedirs(TMP_DIR, exist_ok=True)
 
 ANALYSIS_TTL_MINUTES = 10
-RATE_LIMIT_COUNT = 3       # 게스트 제한: 사건 1건당 기기 기준
+# 게스트 제한: 사건 1건당 기기 기준. 시연 촬영처럼 같은 폰으로 여러 번 제보해야
+# 할 때는 환경변수로 늘린다(hackerton/start-server.ps1이 켤 때 넣는다).
+RATE_LIMIT_COUNT = int(os.environ.get("GYEOTAE_RATE_LIMIT", "3"))
 RATE_LIMIT_WINDOW_MIN = 10
 
 app = Flask(__name__)
@@ -965,7 +967,7 @@ def create_report():
     if m["status"] == "resolved":
         return case_resolved_error()
 
-    # 게스트 남용 방지: 사건 1건당 기기 기준 10분 내 3회
+    # 게스트 남용 방지: 사건 1건당 기기 기준 10분 내 N회
     device_hash = request.headers.get("X-Device-Hash", "anonymous")
     now = now_kst()
     recent = [
