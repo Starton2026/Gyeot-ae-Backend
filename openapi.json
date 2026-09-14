@@ -320,7 +320,7 @@
       "post": {
         "tags": ["reports"],
         "summary": "★ 사진 분석 (S4-1) — 제보 전 단계",
-        "description": "임시 사진은 uploads/tmp/에 저장, TTL 10분. 얼굴 미검출은 에러가 아니라 grade=no_face로 응답하며 제보 가능합니다.",
+        "description": "임시 사진은 uploads/tmp/에 저장, TTL 10분. 얼굴 미검출은 에러가 아니라 grade=no_face로 응답하며 제보 가능합니다. 발견 완료된 사건이면 400(이미 찾은 분).",
         "requestBody": {
           "required": true,
           "content": { "multipart/form-data": { "schema": { "type": "object", "required": ["missing_id", "photo"], "properties": { "missing_id": { "type": "string" }, "photo": { "type": "string", "format": "binary" } } } } }
@@ -335,7 +335,7 @@
       "post": {
         "tags": ["reports"],
         "summary": "★ 제보 확정 (S4)",
-        "description": "analyze에서 받은 analysis_id로 확정 — 사진 재업로드 없음. 게스트 제한: 사건 1건당 X-Device-Hash 기준 10분 내 3회.",
+        "description": "analyze에서 받은 analysis_id로 확정 — 사진 재업로드 없음. 게스트 제한: 사건 1건당 X-Device-Hash 기준 10분 내 3회. 발견 완료된 사건이면 400.",
         "security": [{ "deviceHash": [] }],
         "requestBody": {
           "required": true,

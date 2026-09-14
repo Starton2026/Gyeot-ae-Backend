@@ -889,6 +889,8 @@ def analyze_report():
     m = database.find_missing(db, missing_id)
     if m is None:
         return api_error("NOT_FOUND", f"존재하지 않는 실종자입니다: {missing_id}", 404)
+    if m["status"] == "resolved":
+        return case_resolved_error()
 
     analysis_id = database.new_id("an_")
     ext = os.path.splitext(secure_filename(photo.filename) or "p.jpg")[1] or ".jpg"
@@ -926,6 +928,15 @@ def analyze_report():
     })
 
 
+def case_resolved_error():
+    """이미 찾은 사건에는 제보를 받지 않는다.
+
+    받으면 찾은 사람의 "목격" 알림이 보호자에게 가고, 경로 끝에 발견 뒤의 점이
+    붙는다. 사건은 목록에 남지만(설계 결정 7번) 제보의 대상은 아니다.
+    """
+    return api_error("VALIDATION_ERROR", "이미 찾은 분이에요. 함께 봐 주셔서 고맙습니다.", 400, "missing_id")
+
+
 # ── 14) 제보 확정 — S4 ★ ────────────────────────────────
 @app.route("/reports", methods=["POST"])
 def create_report():
@@ -950,6 +961,9 @@ def create_report():
     m = database.find_missing(db, analysis["missing_id"])
     if m is None:
         return api_error("NOT_FOUND", "실종자 정보를 찾을 수 없습니다.", 404)
+    # 분석하는 사이 보호자가 발견 완료를 눌렀을 수 있다.
+    if m["status"] == "resolved":
+        return case_resolved_error()
 
     # 게스트 남용 방지: 사건 1건당 기기 기준 10분 내 3회
     device_hash = request.headers.get("X-Device-Hash", "anonymous")
