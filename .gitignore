@@ -6,3 +6,4 @@ uploads/
 db.json
 serviceAccountKey.json
 .DS_Store
+demo/
