@@ -28,7 +28,7 @@
           "error": {
             "type": "object",
             "properties": {
-              "code": { "type": "string", "example": "FACE_NOT_FOUND", "description": "VALIDATION_ERROR | FACE_NOT_FOUND | UNAUTHORIZED | NOT_FOUND | ANALYSIS_EXPIRED | RATE_LIMITED" },
+              "code": { "type": "string", "example": "FACE_NOT_FOUND", "description": "VALIDATION_ERROR | FACE_NOT_FOUND | UNAUTHORIZED | FORBIDDEN | NOT_FOUND | ANALYSIS_EXPIRED | RATE_LIMITED" },
               "message": { "type": "string" },
               "field": { "type": "string", "nullable": true }
             }
@@ -252,6 +252,44 @@
           "200": { "description": "OK", "content": { "application/json": { "schema": { "allOf": [{ "$ref": "#/components/schemas/MissingSummary" }, { "type": "object", "properties": { "photos": { "type": "array", "items": { "type": "string" } }, "height_cm": { "type": "integer", "nullable": true }, "weight_kg": { "type": "integer", "nullable": true }, "match_count": { "type": "integer" }, "is_guardian": { "type": "boolean" }, "boost_available": { "type": "boolean" } } }] } } } },
           "404": { "description": "없음", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
+      },
+      "patch": {
+        "tags": ["missing"],
+        "summary": "정보 수정 (S3 보호자)",
+        "description": "**등록한 보호자만.** 인상착의·마지막 목격 위치·주소·키·몸무게만 바꿀 수 있습니다. 이름·나이·성별·구분·실종 일시는 경과 시간과 긴급도를 조작할 수 있어 400. 키·몸무게는 null이면 지웁니다. 응답은 상세와 같은 모양입니다.",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "missing_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "description": { "type": "string" }, "last_lat": { "type": "number", "description": "last_lng와 함께" }, "last_lng": { "type": "number" }, "last_address": { "type": "string", "nullable": true }, "height_cm": { "type": "integer", "nullable": true }, "weight_kg": { "type": "integer", "nullable": true } } } } }
+        },
+        "responses": {
+          "200": { "description": "바뀐 상세 (GET과 같은 모양)" },
+          "400": { "description": "바꿀 수 없는 항목(field에 항목명)·빈 인상착의·위치 반쪽·숫자 아님", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "토큰 없음·만료" },
+          "403": { "description": "등록한 보호자가 아님" },
+          "404": { "description": "없는 사건" }
+        }
+      }
+    },
+    "/missing/{missing_id}/photos": {
+      "post": {
+        "tags": ["missing"],
+        "summary": "사진 추가 (S3 보호자)",
+        "description": "**등록한 보호자만.** 사진의 얼굴 벡터를 더하고 **기존 제보의 유사도를 전부 다시 계산한 뒤 route_index를 다시 붙입니다.** 얼굴을 못 찾은 제보는 건너뜁니다(얼굴 검출은 제보 사진만 보고 정해집니다). 올린 사진 전부에서 얼굴이 안 잡히면 FACE_NOT_FOUND. 사건당 사진은 10장까지.",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "missing_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "required": true,
+          "content": { "multipart/form-data": { "schema": { "type": "object", "required": ["photos"], "properties": { "photos": { "type": "array", "items": { "type": "string", "format": "binary" } } } } } }
+        },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "photos": { "type": "array", "items": { "type": "string" } }, "face_encoding_count": { "type": "integer" }, "reanalyzed_reports": { "type": "integer", "description": "유사도를 다시 계산한 제보 수" } } } } } },
+          "400": { "description": "사진 없음·10장 초과(VALIDATION_ERROR) 또는 전체 얼굴 미검출(FACE_NOT_FOUND)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "토큰 없음·만료" },
+          "403": { "description": "등록한 보호자가 아님" },
+          "404": { "description": "없는 사건" }
+        }
       }
     },
     "/reports/analyze": {
@@ -290,7 +328,7 @@
       "get": {
         "tags": ["reports"],
         "summary": "★ 제보 목록 / 이동 경로 (S3·S5)",
-        "description": "`reports`는 최신순(타임라인용), `path`는 시간순 + 최초 실종 지점 포함(폴리라인용) — 방향이 반대인 것은 의도된 것입니다.",
+        "description": "`reports`는 최신순(타임라인용), `path`는 시간순 + 최초 실종 지점 포함(폴리라인용) — 방향이 반대인 것은 의도된 것입니다. 보호자 토큰으로 부르면 숨긴 제보(status=hidden)도 함께 옵니다(경로 번호 없음).",
         "parameters": [
           { "name": "missing_id", "in": "path", "required": true, "schema": { "type": "string" } },
           { "name": "min_similarity", "in": "query", "schema": { "type": "number", "default": 0 }, "description": "필터 토글용 (UI 기본 60)" },
@@ -321,16 +359,34 @@
         "responses": { "201": { "description": "구 응답 형태 { message, report_id, similarity, face_found, is_match, alert }" } }
       }
     },
-    "/reports/{missing_id}": {
+    "/reports/{id}": {
       "get": {
         "tags": ["legacy"],
-        "summary": "(deprecated) 구 제보 목록 API",
+        "summary": "(deprecated) 구 제보 목록 API — id는 실종자 id",
         "deprecated": true,
         "parameters": [
-          { "name": "missing_id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" }, "description": "실종자 id (missing_id)" },
           { "name": "only_match", "in": "query", "schema": { "type": "string", "enum": ["1"] } }
         ],
         "responses": { "200": { "description": "구 응답 형태 { missing_id, count, reports, path }" } }
+      },
+      "patch": {
+        "tags": ["reports"],
+        "summary": "제보 관리 (S3 보호자) — id는 제보 id",
+        "description": "**사건을 등록한 보호자만.** `status`: hidden(허위·중복 — 경로에서 빠지고 시민에게 안 보임) / visible(되돌리기). `confirmed`: 보호자가 직접 확인함 체크(true·false). 둘 중 하나 이상. 지우지 않습니다.",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" }, "description": "제보 id (report_id)" }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string", "enum": ["hidden", "visible"] }, "confirmed": { "type": "boolean" } } } } }
+        },
+        "responses": {
+          "200": { "description": "바뀐 제보", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Report" } } } },
+          "400": { "description": "둘 다 없음·값이 틀림", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "토큰 없음·만료" },
+          "403": { "description": "사건 보호자가 아님" },
+          "404": { "description": "없는 제보" }
+        }
       }
     }
   }

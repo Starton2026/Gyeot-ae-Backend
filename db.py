@@ -38,6 +38,13 @@ def find_missing(db, missing_id):
     return None
 
 
+def find_report(db, report_id):
+    for r in db["reports"]:
+        if r["id"] == report_id:
+            return r
+    return None
+
+
 def find_analysis(db, analysis_id):
     for a in db["analyses"]:
         if a["id"] == analysis_id:

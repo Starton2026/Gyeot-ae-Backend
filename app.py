@@ -598,15 +598,10 @@ def list_missing():
 
 
 # ── 7) 실종자 상세 — S3 ─────────────────────────────────
-@app.route("/missing/<missing_id>", methods=["GET"])
-def missing_detail(missing_id):
-    db = database.load_db()
-    m = database.find_missing(db, missing_id)
-    if m is None:
-        return api_error("NOT_FOUND", f"존재하지 않는 실종자입니다: {missing_id}", 404)
-
-    reports = database.case_reports(db, missing_id)
-    detail = {
+def missing_detail_json(db, m, user_id):
+    """상세 응답. 정보 수정·사진 추가도 바뀐 뒤 같은 모양을 돌려준다."""
+    reports = database.case_reports(db, m["id"])
+    return {
         "id": m["id"], "name": m["name"], "age": m.get("age"),
         "gender": m.get("gender"), "category": m.get("category"),
         "description": m.get("description", ""),
@@ -619,10 +614,189 @@ def missing_detail(missing_id):
         "status": m["status"],
         "report_count": len(reports),
         "match_count": sum(1 for r in reports if r.get("route_index")),
-        "is_guardian": False,      # 인증은 2순위
-        "boost_available": False,  # 부스트는 3순위
+        # 보호자 전용 메뉴(정보 수정·사진 추가·발견 완료·제보 관리)를 띄울지.
+        # 토큰이 없으면 누구도 보호자가 아니다.
+        "is_guardian": user_id is not None and m.get("guardian_id") == user_id,
+        # 부스트는 만들지 않는다(사용자 결정 2026-09-14). CLAUDE.md 설계 결정
+        # 6번 — 사용자 조작으로 순위를 올리는 기능을 만들지 않는다 — 과 부딪힌다.
+        "boost_available": False,
     }
-    return jsonify(detail)
+
+
+def guardian_case(missing_id):
+    """보호자만 할 수 있는 요청의 공통 검사. (db, 사건, 오류 응답) 중 하나는 None."""
+    user_id = auth_service.current_user_id(request)
+    if user_id is None:
+        return None, None, api_error("UNAUTHORIZED", "토큰이 없거나 만료되었습니다.", 401)
+
+    db = database.load_db()
+    m = database.find_missing(db, missing_id)
+    if m is None:
+        return None, None, api_error("NOT_FOUND", f"존재하지 않는 실종자입니다: {missing_id}", 404)
+    if m.get("guardian_id") != user_id:
+        return None, None, api_error("FORBIDDEN", "등록한 보호자만 할 수 있습니다.", 403)
+
+    return db, m, None
+
+
+@app.route("/missing/<missing_id>", methods=["GET"])
+def missing_detail(missing_id):
+    db = database.load_db()
+    m = database.find_missing(db, missing_id)
+    if m is None:
+        return api_error("NOT_FOUND", f"존재하지 않는 실종자입니다: {missing_id}", 404)
+
+    return jsonify(missing_detail_json(db, m, auth_service.current_user_id(request)))
+
+
+# ── 8) 정보 수정 — S3 보호자 ────────────────────────────
+# 명세서 8). 이 밖의 값은 바꿀 수 없다. 이름·실종 일시·구분이 바뀌면 경과
+# 시간과 긴급도를 조작할 수 있다. 나이·성별도 같은 사람이 바뀌는 셈이라 막는다.
+EDITABLE_FIELDS = ("description", "last_lat", "last_lng", "last_address", "height_cm", "weight_kg")
+LOCKED_FIELDS = ("name", "age", "gender", "category", "missing_at")
+
+
+@app.route("/missing/<missing_id>", methods=["PATCH"])
+def update_missing(missing_id):
+    db, m, error = guardian_case(missing_id)
+    if error:
+        return error
+
+    data = request.get_json(silent=True) or {}
+    locked = [key for key in LOCKED_FIELDS if key in data]
+    if locked:
+        return api_error(
+            "VALIDATION_ERROR", "이름·나이·성별·구분·실종 일시는 바꿀 수 없습니다.", 400, locked[0])
+    if not any(key in data for key in EDITABLE_FIELDS):
+        return api_error("VALIDATION_ERROR", "바꿀 항목이 없습니다.", 400)
+
+    # 전부 검사한 뒤에 한꺼번에 바꾼다. 중간에 틀린 값이 있으면 앞의 것만
+    # 바뀐 채로 남는다.
+    changes = {}
+    if "description" in data:
+        description = (data["description"] or "").strip() if isinstance(data["description"], str) else ""
+        if not description:
+            return api_error("VALIDATION_ERROR", "인상착의를 입력해 주세요.", 400, "description")
+        changes["description"] = description
+
+    if "last_lat" in data or "last_lng" in data:
+        try:
+            changes["last_lat"] = float(data["last_lat"])
+            changes["last_lng"] = float(data["last_lng"])
+        except (KeyError, TypeError, ValueError):
+            return api_error("VALIDATION_ERROR", "마지막 목격 위치를 골라 주세요.", 400, "last_lat")
+
+    if "last_address" in data:
+        address = data["last_address"]
+        changes["last_address"] = (address.strip() or None) if isinstance(address, str) else None
+
+    for key in ("height_cm", "weight_kg"):
+        if key not in data:
+            continue
+        value = data[key]
+        # 비우면 지운다. 선택 항목이다.
+        if value is None or value == "":
+            changes[key] = None
+            continue
+        try:
+            number = int(value)
+            if number <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            return api_error("VALIDATION_ERROR", "숫자로 입력해 주세요.", 400, key)
+        changes[key] = number
+
+    m.update(changes)
+    m["updated_at"] = now_kst().isoformat()
+    database.save_db(db)
+    firebase_service.push_missing(m)
+
+    return jsonify(missing_detail_json(db, m, m["guardian_id"]))
+
+
+# ── 9) 사진 추가 — S3 보호자 ────────────────────────────
+MAX_CASE_PHOTOS = 10
+
+
+def reanalyze_reports(db, m):
+    """등록 사진이 늘어난 사건의 제보 유사도를 다시 매긴다. 다시 매긴 제보 수.
+
+    얼굴을 못 찾은 제보는 건너뛴다. 얼굴 검출은 제보 사진만 보고 정해져서,
+    등록 사진이 늘어도 결과가 같다.
+    """
+    count = 0
+    for r in database.case_reports(db, m["id"]):
+        if not r.get("photo") or not r.get("face_found"):
+            continue
+        path = os.path.join(UPLOAD_DIR, r["photo"])
+        if not os.path.exists(path):
+            continue
+
+        similarity, face_found, _ = face_service.best_similarity(m["encodings"], path)
+        r["similarity"] = similarity
+        r["face_found"] = face_found
+        r["grade"] = face_service.grade_of(similarity, face_found)
+        count += 1
+    return count
+
+
+@app.route("/missing/<missing_id>/photos", methods=["POST"])
+def add_missing_photos(missing_id):
+    """사진 추가(명세서 9). **기존 제보의 유사도를 전부 다시 매기고 경로 번호를 다시 붙인다.**
+
+    각도·조명이 다른 사진이 늘면, 낮게 나왔던 진짜 제보가 경로에 들어올 수 있다.
+
+    등록과 같이 얼굴이 하나도 안 잡히면 거절한다. 얼굴 없는 사진은 대조 기준을
+    늘리지 못하고, 보호자는 사진을 넣었는데 아무것도 달라지지 않는 이유를 모른다.
+    """
+    db, m, error = guardian_case(missing_id)
+    if error:
+        return error
+
+    photos = request.files.getlist("photos") or request.files.getlist("photos[]")
+    if not photos:
+        return api_error("VALIDATION_ERROR", "사진을 한 장 이상 올려 주세요.", 400, "photos")
+    if len(m.get("photos", [])) + len(photos) > MAX_CASE_PHOTOS:
+        return api_error(
+            "VALIDATION_ERROR", f"사진은 사건당 {MAX_CASE_PHOTOS}장까지 올릴 수 있습니다.", 400, "photos")
+
+    saved, encodings, encoded_photos = [], [], []
+    for f in photos:
+        fname = save_photo(f, "m")
+        saved.append(fname)
+        enc = face_service.get_face_encoding(os.path.join(UPLOAD_DIR, fname))
+        if enc is not None:
+            encodings.append(enc.tolist())
+            encoded_photos.append(fname)
+
+    if not encodings:
+        for fname in saved:
+            for p in (fname, thumb_name(fname)):
+                path = os.path.join(UPLOAD_DIR, p)
+                if os.path.exists(path):
+                    os.remove(path)
+        return api_error(
+            "FACE_NOT_FOUND",
+            "사진에서 얼굴을 찾지 못했습니다. 얼굴이 잘 보이는 사진을 올려주세요.",
+            400, "photos",
+        )
+
+    m["photos"] = m.get("photos", []) + saved
+    m["encodings"] = m.get("encodings", []) + encodings
+    m["encoded_photos"] = m.get("encoded_photos", []) + encoded_photos
+
+    reanalyzed = reanalyze_reports(db, m)
+    recompute_route_indexes(db, m["id"])
+    database.save_db(db)
+
+    firebase_service.push_missing(m)
+    firebase_service.push_case_reports(database.case_reports(db, m["id"]), m["name"])
+
+    return jsonify({
+        "photos": [f"/uploads/{p}" for p in m["photos"]],
+        "face_encoding_count": len(m["encodings"]),
+        "reanalyzed_reports": reanalyzed,
+    })
 
 
 # ── 13) 사진 분석 — S4-1 ★ ──────────────────────────────
@@ -788,8 +962,12 @@ def case_reports_api(missing_id):
     include_low = request.args.get("include_low", "true").lower() != "false"
     until = request.args.get("until")
 
+    # 숨긴 제보는 보호자에게만 보인다. 숨긴 사람이 못 보면 다시 보이게 할 수 없다.
+    # 숨긴 제보는 경로 번호가 없어서 지도의 선에는 들어가지 않는다.
+    user_id = auth_service.current_user_id(request)
+    is_guardian = user_id is not None and m.get("guardian_id") == user_id
     all_reports = [r for r in database.case_reports(db, missing_id)
-                   if r["status"] == "visible"]
+                   if r["status"] == "visible" or (is_guardian and r["status"] == "hidden")]
     if until:
         try:
             until_dt = parse_dt(until)
@@ -851,6 +1029,56 @@ def case_reports_api(missing_id):
         "path": path,
         "time_range": time_range,
     })
+
+
+# ── 16) 제보 관리 — S3 보호자 ───────────────────────────
+@app.route("/reports/<report_id>", methods=["PATCH"])
+def update_report(report_id):
+    """보호자가 제보를 숨기거나(허위·중복) 확인함으로 표시한다(명세서 16).
+
+    `status`는 `hidden`·`visible` 둘 다 받는다. 명세 예시는 숨기기뿐이지만, 잘못
+    숨긴 제보를 되돌릴 길이 없으면 보호자가 숨기기를 누르기 두려워한다. 같은
+    이유로 `confirmed`도 true·false를 모두 받는다.
+
+    **지우지 않는다.** 숨긴 제보는 경로에서 빠지고 시민에게 안 보일 뿐 남는다.
+    """
+    user_id = auth_service.current_user_id(request)
+    if user_id is None:
+        return api_error("UNAUTHORIZED", "토큰이 없거나 만료되었습니다.", 401)
+
+    db = database.load_db()
+    r = database.find_report(db, report_id)
+    if r is None:
+        return api_error("NOT_FOUND", f"존재하지 않는 제보입니다: {report_id}", 404)
+    m = database.find_missing(db, r["missing_id"])
+    if m is None or m.get("guardian_id") != user_id:
+        return api_error("FORBIDDEN", "사건을 등록한 보호자만 할 수 있습니다.", 403)
+
+    data = request.get_json(silent=True) or {}
+    status = data.get("status")
+    confirmed = data.get("confirmed")
+    if status is None and confirmed is None:
+        return api_error("VALIDATION_ERROR", "status 또는 confirmed가 필요합니다.", 400)
+    if status is not None and status not in ("hidden", "visible"):
+        return api_error("VALIDATION_ERROR", "status는 hidden 또는 visible입니다.", 400, "status")
+    if confirmed is not None and not isinstance(confirmed, bool):
+        return api_error("VALIDATION_ERROR", "confirmed는 true 또는 false입니다.", 400, "confirmed")
+
+    if confirmed is not None:
+        r["confirmed"] = confirmed
+
+    changed = []
+    if status is not None and status != r["status"]:
+        r["status"] = status
+        # 숨기면 경로에서 빠지고, 뒤에 있던 제보의 번호가 하나씩 당겨진다.
+        changed = recompute_route_indexes(db, m["id"])
+    database.save_db(db)
+
+    to_push = {c["id"]: c for c in changed}
+    to_push[r["id"]] = r
+    firebase_service.push_case_reports(to_push.values(), m["name"])
+
+    return jsonify(report_public(r))
 
 
 # ── API 문서 (Swagger UI) ────────────────────────────────
