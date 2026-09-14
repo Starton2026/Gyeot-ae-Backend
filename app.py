@@ -61,8 +61,10 @@ def save_photo(file, prefix, directory=UPLOAD_DIR):
 def make_thumbnail(path, width=400):
     """{이름}_thumb.jpg 규칙으로 목록용 썸네일 생성. 실패해도 무시."""
     try:
-        from PIL import Image
-        img = Image.open(path)
+        from PIL import Image, ImageOps
+        # 폰 사진은 픽셀을 눕혀 저장하고 회전값만 붙인다. 썸네일은 그 값을 버리고
+        # 저장되므로, 세우지 않으면 목록에서 사진이 옆으로 눕는다.
+        img = ImageOps.exif_transpose(Image.open(path))
         img.thumbnail((width, width * 2))
         base, _ = os.path.splitext(path)
         img.convert("RGB").save(base + "_thumb.jpg", "JPEG", quality=80)
