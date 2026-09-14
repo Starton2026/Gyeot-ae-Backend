@@ -1,4 +1,4 @@
-"""FCM 푸시 발송 — 주변 시민 알림과 제보자 결과 알림.
+"""FCM 푸시 발송 — 주변 시민 알림과 제보자 결과 알림. 앱 알림함 기록도 여기서 한다.
 
 serviceAccountKey.json이 있을 때만 실제로 보낸다. 없으면 조용히 0을 돌려준다.
 **키가 없다고 실종자 등록이나 발견 완료가 실패하면 안 된다.** 사건 기록이
@@ -143,6 +143,41 @@ def _drop_stale(db, tokens):
     database.save_db(db)
 
 
+# ── 알림함에 남기기 ──────────────────────────────────────
+
+def _remember(db, recipients, kind, missing, title, body, report_id=None):
+    """앱 알림함에 받는 사람마다 한 줄씩 남긴다.
+
+    **푸시가 실제로 갔는지와 상관없이 남긴다.** 푸시는 기기가 꺼져 있거나
+    권한이 없거나 서버에 Firebase 키가 없으면 사라지는데, 알림함은 그래도
+    나중에 앱을 열면 보여야 한다.
+
+    [recipients]는 ("user_id", 값) 또는 ("device_hash", 값) 쌍이다. 보호자에게
+    가는 제보 알림은 계정에만 남긴다 — 기기에 남기면 그 폰으로 다른 계정이
+    로그인했을 때 남의 사건 소식을 본다.
+    """
+    at = now_kst().isoformat()
+    seen = set()
+    for field, value in recipients:
+        if not value or (field, value) in seen:
+            continue
+        seen.add((field, value))
+        db["notifications"].append({
+            "id": database.new_id("n_"),
+            "type": kind,
+            "missing_id": missing["id"],
+            "report_id": report_id,
+            "title": title,
+            "body": body,
+            "user_id": value if field == "user_id" else None,
+            "device_hash": value if field == "device_hash" else None,
+            "created_at": at,
+            "read_at": None,
+        })
+    if seen:
+        database.save_db(db)
+
+
 # ── 바깥에서 부르는 것 ───────────────────────────────────
 
 def notify_guardian(db, missing, report):
@@ -167,6 +202,11 @@ def notify_guardian(db, missing, report):
     if report.get("reporter_id") == guardian_id:
         return False
 
+    title = f"{missing['name']} 님 목격 제보가 들어왔어요"
+    body = _report_line(report)
+    _remember(db, [("user_id", guardian_id)], "report", missing, title, body,
+              report_id=report["id"])
+
     tokens = [
         device["push_token"]
         for device in db.get("devices", [])
@@ -177,8 +217,8 @@ def notify_guardian(db, missing, report):
 
     sent, stale = _send(
         list(dict.fromkeys(tokens)),
-        f"{missing['name']} 님 목격 제보가 들어왔어요",
-        _report_line(report),
+        title,
+        body,
         {"type": "report", "missing_id": missing["id"], "report_id": report["id"]},
     )
     _drop_stale(db, stale)
@@ -215,10 +255,16 @@ def notify_new_case(db, missing, exclude_device_hash=None):
 
     age = missing.get("age")
     where = missing.get("last_address") or "마지막 목격 위치 확인"
+    title = "내 주변에서 실종 신고가 있었어요"
+    body = f"{missing['name']} · {age}세 · {where}"
+    # 동네 소식은 기기에 온다. 위치로 고른 대상이지 계정으로 고른 대상이 아니다.
+    _remember(db, [("device_hash", d.get("device_hash")) for d in targets],
+              "missing", missing, title, body)
+
     sent, stale = _send(
         [device["push_token"] for device in targets],
-        "내 주변에서 실종 신고가 있었어요",
-        f"{missing['name']} · {age}세 · {where}",
+        title,
+        body,
         {"type": "missing", "missing_id": missing["id"]},
     )
     _drop_stale(db, stale)
@@ -240,6 +286,22 @@ def notify_resolved(db, missing, reporter_keys):
 
     keys = set(reporter_keys)
     guardian_id = missing.get("guardian_id")
+
+    title = "찾았습니다"
+    body = f"제보해 주신 {missing['name']} 님을 찾았어요. 고맙습니다."
+    # 제보자는 계정일 수도 기기일 수도 있다(설계 결정 1번). 회원번호면 계정에,
+    # 아니면 그 기기에 남긴다.
+    user_ids = {user["id"] for user in db.get("users", [])}
+    _remember(
+        db,
+        [
+            ("user_id" if key in user_ids else "device_hash", key)
+            for key in sorted(k for k in keys if k)
+            if key != guardian_id
+        ],
+        "resolved", missing, title, body,
+    )
+
     tokens = [
         device["push_token"]
         for device in db.get("devices", [])
@@ -258,8 +320,8 @@ def notify_resolved(db, missing, reporter_keys):
     sent, stale = _send(
         # 중복 제거. 한 기기가 같은 사건에 여러 번 제보했을 수 있다.
         list(dict.fromkeys(tokens)),
-        "찾았습니다",
-        f"제보해 주신 {missing['name']} 님을 찾았어요. 고맙습니다.",
+        title,
+        body,
         {"type": "resolved", "missing_id": missing["id"]},
     )
     _drop_stale(db, stale)

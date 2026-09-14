@@ -5,7 +5,11 @@ import uuid
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "db.json")
 
-_DEFAULT = {"missing": [], "reports": [], "analyses": [], "users": [], "devices": []}
+_DEFAULT = {
+    "missing": [], "reports": [], "analyses": [], "users": [], "devices": [],
+    # 앱 알림함. 푸시를 보낼 때 받는 사람마다 한 줄씩 남긴다(push_service).
+    "notifications": [],
+}
 
 
 def load_db():
