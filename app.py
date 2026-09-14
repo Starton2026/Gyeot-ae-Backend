@@ -335,6 +335,81 @@ def my_reports():
     return jsonify({"count": len(items), "items": items})
 
 
+# ── 알림함 ───────────────────────────────────────────────
+# **명세서에 없다.** 상단바 알림 버튼(기능정의서 5.5)이 열 화면이 필요한데 경로가
+# 없어 추가했다. 푸시를 보낼 때 push_service가 받는 사람마다 기록해 둔다.
+
+NOTIFICATION_LIMIT = 50
+
+
+def my_notifications(db, user_id, device_hash):
+    """계정에 온 알림과 이 기기에 온 알림. 로그인했어도 동네 소식은 기기로 온다."""
+    return [
+        n for n in db["notifications"]
+        if (user_id and n.get("user_id") == user_id)
+        or (device_hash and n.get("device_hash") == device_hash)
+    ]
+
+
+@app.route("/me/notifications", methods=["GET"])
+def notifications_api():
+    """최신순 알림. 안 읽은 수를 함께 준다(상단바 점)."""
+    user_id = auth_service.current_user_id(request)
+    device_hash = request.headers.get("X-Device-Hash")
+    if not user_id and not device_hash:
+        return api_error("VALIDATION_ERROR", "Authorization 또는 X-Device-Hash 헤더가 필요합니다.", 400)
+
+    db = database.load_db()
+    mine = sorted(
+        my_notifications(db, user_id, device_hash),
+        key=lambda n: n["created_at"],
+        reverse=True,
+    )
+
+    items = []
+    for n in mine[:NOTIFICATION_LIMIT]:
+        m = database.find_missing(db, n["missing_id"])
+        items.append({
+            "id": n["id"],
+            "type": n["type"],
+            "missing_id": n["missing_id"],
+            "report_id": n.get("report_id"),
+            "title": n["title"],
+            "body": n["body"],
+            "created_at": n["created_at"],
+            "read": n.get("read_at") is not None,
+            "missing_thumbnail": f"/uploads/{thumb_name(m['photos'][0])}" if m and m.get("photos") else None,
+            "missing_status": m["status"] if m else None,
+        })
+
+    return jsonify({
+        "count": len(mine),
+        "unread_count": sum(1 for n in mine if n.get("read_at") is None),
+        "items": items,
+    })
+
+
+@app.route("/me/notifications/read", methods=["POST"])
+def read_notifications():
+    """내 알림을 전부 읽음으로. 알림함을 열면 부른다."""
+    user_id = auth_service.current_user_id(request)
+    device_hash = request.headers.get("X-Device-Hash")
+    if not user_id and not device_hash:
+        return api_error("VALIDATION_ERROR", "Authorization 또는 X-Device-Hash 헤더가 필요합니다.", 400)
+
+    db = database.load_db()
+    at = now_kst().isoformat()
+    marked = 0
+    for n in my_notifications(db, user_id, device_hash):
+        if n.get("read_at") is None:
+            n["read_at"] = at
+            marked += 1
+    if marked:
+        database.save_db(db)
+
+    return jsonify({"marked": marked, "unread_count": 0})
+
+
 # ── 내가 등록한 실종자 — S8 ─────────────────────────────
 @app.route("/me/missing", methods=["GET"])
 def my_missing():

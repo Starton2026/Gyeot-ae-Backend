@@ -168,6 +168,30 @@
         }
       }
     },
+    "/me/notifications": {
+      "get": {
+        "tags": ["me"],
+        "summary": "알림함 (상단바 알림)",
+        "description": "명세서에 없는 경로입니다. 상단바 알림 버튼이 열 화면에 쓰려고 추가했습니다.\n\n\n\n푸시를 보낼 때 받는 사람마다 기록합니다 — 푸시가 실제로 갔는지와 상관없이 남습니다. 토큰이 있으면 계정에 온 알림과 이 기기(`X-Device-Hash`)에 온 알림을 함께, 없으면 기기 알림만 줍니다. 보호자에게 가는 제보 알림은 계정에만 남아 같은 폰의 다른 계정에는 보이지 않습니다.\n\n\n\n최신순 50건.",
+        "security": [{ "bearerAuth": [] }, { "deviceHash": [] }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "count": { "type": "integer" }, "unread_count": { "type": "integer", "description": "안 읽은 수. 상단바 점" }, "items": { "type": "array", "items": { "type": "object", "properties": { "id": { "type": "string" }, "type": { "type": "string", "enum": ["missing", "report", "resolved"], "description": "주변 실종 신고 / 내 사건 제보 / 내가 제보한 사건 발견" }, "missing_id": { "type": "string" }, "report_id": { "type": "string", "nullable": true }, "title": { "type": "string" }, "body": { "type": "string" }, "created_at": { "type": "string" }, "read": { "type": "boolean" }, "missing_thumbnail": { "type": "string", "nullable": true }, "missing_status": { "type": "string", "nullable": true } } } } } } } } },
+          "400": { "description": "Authorization·X-Device-Hash 둘 다 없음" }
+        }
+      }
+    },
+    "/me/notifications/read": {
+      "post": {
+        "tags": ["me"],
+        "summary": "알림 전부 읽음",
+        "description": "명세서에 없는 경로입니다. 알림함을 열면 부릅니다. 대상은 `GET /me/notifications`와 같습니다.",
+        "security": [{ "bearerAuth": [] }, { "deviceHash": [] }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "marked": { "type": "integer", "description": "이번에 읽음으로 바뀐 수" }, "unread_count": { "type": "integer" } } } } } },
+          "400": { "description": "Authorization·X-Device-Hash 둘 다 없음" }
+        }
+      }
+    },
     "/missing/{missing_id}/resolve": {
       "post": {
         "tags": ["missing"],
