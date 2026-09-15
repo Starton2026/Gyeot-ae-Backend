@@ -6,6 +6,8 @@
 - low     : s < 40             → 저장하되 경로 제외
 - no_face : 얼굴 미검출        → 저장하되 경로 제외 (에러 아님)
 """
+import os
+
 import face_recognition
 import numpy as np
 from PIL import Image, ImageOps
@@ -47,13 +49,20 @@ def get_face_encoding(path):
 
     사진을 90도씩 돌려 다시 찾는 것은 하지 않는다. 실측에서 느려지기만 하고,
     돌려서 찾은 얼굴은 어느 사건과도 30% 안팎이라 오검출이었다.
-    """
-    # 가짜 모듈(hackerton/fake-face)은 사진 내용을 해시할 뿐 검출기가 없다.
-    if not hasattr(face_recognition, "face_locations"):
-        encodings = face_recognition.face_encodings(face_recognition.load_image_file(path))
-        return encodings[0] if encodings else None
 
-    image = _load_upright(path)
+    열 수 없는 파일(깨진 사진, 이미지 아님 등)도 None이다. 얼굴을 못 찾은 것과
+    같게 처리해 500 대신 FACE_NOT_FOUND / no_face로 응답되게 한다.
+    """
+    try:
+        # 가짜 모듈(hackerton/fake-face)은 사진 내용을 해시할 뿐 검출기가 없다.
+        if not hasattr(face_recognition, "face_locations"):
+            encodings = face_recognition.face_encodings(face_recognition.load_image_file(path))
+            return encodings[0] if encodings else None
+
+        image = _load_upright(path)
+    except Exception as e:
+        print(f"[face] 사진을 열 수 없음: {os.path.basename(path)} ({type(e).__name__}: {e})")
+        return None
     locations = face_recognition.face_locations(image)
     if not locations:
         return None

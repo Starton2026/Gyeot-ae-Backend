@@ -8,9 +8,10 @@
 """
 import os
 import shutil
+import threading
 from datetime import timedelta
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, g, jsonify, request, send_from_directory
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
@@ -34,6 +35,29 @@ RATE_LIMIT_WINDOW_MIN = 10
 app = Flask(__name__)
 CORS(app)
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024  # 32MB (다중 사진)
+
+
+# ── 쓰기 요청 직렬화 ─────────────────────────────────────
+# 쓰기 요청은 db.json을 통째로 읽고 → 고치고 → 통째로 저장한다. 두 요청이 겹치면
+# 늦게 저장한 쪽이 먼저 저장한 쪽의 변경(기기 등록, 제보 등)을 덮어써 지운다.
+# 저장은 전부 POST/PATCH 안에서만 일어나므로 그 요청을 한 번에 하나씩 돌린다.
+# 조회(GET)는 막지 않는다 — 저장이 파일을 원자적으로 바꾸므로 읽기는 안전하다.
+_WRITE_METHODS = ("POST", "PUT", "PATCH", "DELETE")
+_WRITE_LOCK = threading.Lock()
+
+
+@app.before_request
+def _acquire_write_lock():
+    if request.method in _WRITE_METHODS:
+        _WRITE_LOCK.acquire()
+        g.holds_write_lock = True
+
+
+@app.teardown_request
+def _release_write_lock(exc):
+    # 핸들러가 예외로 끝나도 여기는 불린다. 안 풀면 이후 쓰기 요청이 전부 멈춘다.
+    if g.pop("holds_write_lock", False):
+        _WRITE_LOCK.release()
 
 
 # ── 공통 헬퍼 ────────────────────────────────────────────
