@@ -7,3 +7,4 @@ db.json
 serviceAccountKey.json
 .DS_Store
 demo/
+demo_seed.py
