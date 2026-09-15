@@ -335,7 +335,7 @@
       "post": {
         "tags": ["reports"],
         "summary": "★ 제보 확정 (S4)",
-        "description": "analyze에서 받은 analysis_id로 확정 — 사진 재업로드 없음. 게스트 제한: 사건 1건당 X-Device-Hash 기준 10분 내 3회(환경변수 GYEOTAE_RATE_LIMIT로 변경). 발견 완료된 사건이면 400.",
+        "description": "analyze에서 받은 analysis_id로 확정 — 사진 재업로드 없음. 게스트 제한: 사건 1건당 X-Device-Hash 기준 10분 내 3회. 발견 완료된 사건이면 400.",
         "security": [{ "deviceHash": [] }],
         "requestBody": {
           "required": true,
