@@ -8,3 +8,6 @@ serviceAccountKey.json
 .DS_Store
 demo/
 demo_seed.py
+seed/
+demo_push.py
+
